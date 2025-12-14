@@ -1,6 +1,6 @@
 # swiftTorrent
 
-<img width="512" height="512" alt="image" src="https://github.com/user-attachments/assets/78d3d3fa-8da2-4e8b-8d40-e1687bcbaddc" />
+<img width="120" height="120" alt="image" src="https://github.com/user-attachments/assets/78d3d3fa-8da2-4e8b-8d40-e1687bcbaddc" />
 
 swiftTorrent is a (mostly) Swift torrent application for macOS that has Sonarr & Radarr integration.
 
