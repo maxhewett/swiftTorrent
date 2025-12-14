@@ -11,7 +11,8 @@ struct ContentView: View {
     @StateObject private var engine = TorrentEngine()
 
     @State private var magnet = ""
-    @State private var savePath = (FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? "/tmp")
+    @State private var savePath = (FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
+                                   ?? (NSHomeDirectory() + "/Downloads"))
     @State private var errorText: String?
 
     var body: some View {
@@ -39,14 +40,22 @@ struct ContentView: View {
                     VStack(alignment: .leading) {
                         Text(t.name).lineLimit(1)
                         ProgressView(value: t.progress)
+                            .animation(nil, value: t.progress) // stops the “restart swoosh”
                     }
+
                     Spacer()
-                    Text("\(t.peers)p/\(t.seeds)s")
-                    Text("↓ \(formatBps(t.downBps))")
-                    Text("↑ \(formatBps(t.upBps))")
+
                     Text(stateLabel(t.state))
-                        .frame(width: 90, alignment: .leading)
-                    if t.isSeeding { Text("Seeding") }
+                        .frame(width: 100, alignment: .leading)
+
+                    Text("\(t.peers)p/\(t.seeds)s")
+                        .frame(width: 70, alignment: .trailing)
+
+                    Text("↓ \(formatBps(t.downBps))")
+                        .frame(width: 110, alignment: .trailing)
+
+                    Text("↑ \(formatBps(t.upBps))")
+                        .frame(width: 110, alignment: .trailing)
                 }
             }
         }
@@ -59,7 +68,7 @@ struct ContentView: View {
         if kb < 1024 { return String(format: "%.0f KB/s", kb) }
         return String(format: "%.1f MB/s", kb / 1024.0)
     }
-    
+
     private func stateLabel(_ s: Int) -> String {
         switch s {
         case 0: return "Queued"

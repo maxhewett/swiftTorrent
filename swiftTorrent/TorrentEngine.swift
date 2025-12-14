@@ -10,7 +10,7 @@ import Combine
 import TorrentCore
 
 struct TorrentRow: Identifiable {
-    let id = UUID()
+    let id: String            // stable id from info-hash
     let name: String
     let progress: Double
     let downBps: Int
@@ -53,6 +53,16 @@ final class TorrentEngine: ObservableObject {
     func addMagnet(_ magnet: String, savePath: String) -> String? {
         guard let s = session else { return "Session not initialised" }
 
+        // Ensure save path exists
+        do {
+            try FileManager.default.createDirectory(
+                atPath: savePath,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            return "Failed to create save directory: \(error.localizedDescription)"
+        }
+
         var errBuf = Array<CChar>(repeating: 0, count: 512)
 
         let ok = magnet.withCString { magnetC in
@@ -82,9 +92,11 @@ final class TorrentEngine: ObservableObject {
         for i in 0..<count {
             let st = raw[i]
             let name = String(cString: st_get_torrent_name(s, Int32(i)))
+            let id = String(cString: st_get_torrent_id(s, Int32(i)))
 
             rows.append(
                 TorrentRow(
+                    id: id,
                     name: name,
                     progress: Double(st.progress),
                     downBps: Int(st.download_rate),
