@@ -76,10 +76,6 @@ struct ContentView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Text("swiftTorrent").font(.headline)
-            }
-
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     showingAddSheet = true
@@ -87,19 +83,17 @@ struct ContentView: View {
                     Label("Add Torrent", systemImage: "plus")
                 }
 
-                Divider()
+                Button(role: .destructive) {
+                    confirmRemove = true
+                } label: {
+                    Label("Remove", systemImage: "minus")
+                }
+                .disabled(selectedTorrent == nil)
 
                 Button {
                     togglePauseResume()
                 } label: {
                     Label(pauseResumeLabel, systemImage: pauseResumeSymbol)
-                }
-                .disabled(selectedTorrent == nil)
-
-                Button(role: .destructive) {
-                    confirmRemove = true
-                } label: {
-                    Label("Remove", systemImage: "minus.circle")
                 }
                 .disabled(selectedTorrent == nil)
             }

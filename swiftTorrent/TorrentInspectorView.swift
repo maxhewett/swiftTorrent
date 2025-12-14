@@ -70,14 +70,43 @@ struct TorrentInspectorView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     List(files) { f in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(f.path).lineLimit(1)
-                            ProgressView(value: f.progress)
-                            Text("\(formatBytes(f.done)) / \(formatBytes(f.size))")
+                        let pathURL = URL(fileURLWithPath: f.path)
+                        let filename = pathURL.lastPathComponent
+                        let parentPath = pathURL.deletingLastPathComponent().path
+                        let showParent = parentPath != "." && parentPath != "/"
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            // Title: just the filename
+                            Text(filename)
+                                .font(.body)
+                                .lineLimit(1)
+
+                            // Subtext: folder path (grey)
+                            if showParent {
+                                Text(parentPath)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+
+                            if f.progress >= 0.999 {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                    Text("Download complete")
+                                        .foregroundStyle(.secondary)
+                                }
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                            } else {
+                                ProgressView(value: f.progress)
+                                    .animation(nil, value: f.progress)
+
+                                Text("\(formatBytes(f.done)) / \(formatBytes(f.size))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                        .padding(.vertical, 4)
+                        .padding(.vertical, 6)
                     }
                     .frame(minHeight: 180)
                 }

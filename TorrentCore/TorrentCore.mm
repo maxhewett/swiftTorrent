@@ -189,8 +189,7 @@ bool st_get_torrent_file_info(
     int64_t* out_done
 ) {
     auto s = reinterpret_cast<SessionWrap*>(session);
-    if (!s) return false;
-    if (!out_path || !out_size || !out_done) return false;
+    if (!s || !out_path || !out_size || !out_done) return false;
     if (torrent_index < 0 || torrent_index >= (int)s->handles.size()) return false;
 
     lt::torrent_handle h = s->handles[torrent_index];
@@ -202,11 +201,13 @@ bool st_get_torrent_file_info(
     int num = ti->files().num_files();
     if (file_index < 0 || file_index >= num) return false;
 
-    // file_progress gives bytes done per file
     std::vector<std::int64_t> prog;
     h.file_progress(prog, lt::torrent_handle::piece_granularity);
 
-    std::string p = ti->files().file_path(file_index);
+    std::string p = std::string(ti->files().file_path(file_index));
+    if (p.empty()) p = std::string(ti->files().file_name(file_index));
+    if (p.empty()) p = "file-" + std::to_string(file_index);
+
     static thread_local std::string tl_path;
     tl_path = p;
 
