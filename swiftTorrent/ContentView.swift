@@ -6,13 +6,16 @@
 //
 
 import SwiftUI
+import Foundation
 
 struct ContentView: View {
     @StateObject private var engine = TorrentEngine()
 
+    @State private var selectedTorrentID: String?
     @State private var magnet = ""
     @State private var savePath = (FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
                                    ?? (NSHomeDirectory() + "/Downloads"))
+    @State private var category = ""
     @State private var errorText: String?
 
     var body: some View {
@@ -25,8 +28,13 @@ struct ContentView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 260)
 
+                TextField("Category…", text: $category)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+
                 Button("Add") {
-                    errorText = engine.addMagnet(magnet, savePath: savePath)
+                    let c = category.trimmingCharacters(in: .whitespacesAndNewlines)
+                    errorText = engine.addMagnet(magnet, savePath: savePath, category: c.isEmpty ? nil : c)
                 }
                 .disabled(magnet.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -35,32 +43,64 @@ struct ContentView: View {
                 Text(errorText).foregroundStyle(.red)
             }
 
-            List(engine.torrents) { t in
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text(t.name).lineLimit(1)
-                        ProgressView(value: t.progress)
-                            .animation(nil, value: t.progress) // stops the “restart swoosh”
+            HSplitView {
+                List(selection: $selectedTorrentID) {
+                    ForEach(engine.torrents) { t in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text(t.name).lineLimit(1)
+                                    Spacer()
+                                    if let cat = t.category, !cat.isEmpty {
+                                        Text(cat)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                ProgressView(value: t.progress)
+                                    .animation(nil, value: t.progress)
+                            }
+
+                            Spacer()
+
+                            Text(stateLabel(t.state))
+                                .frame(width: 100, alignment: .leading)
+                                .foregroundStyle(.secondary)
+
+                            Text("\(t.peers)p/\(t.seeds)s")
+                                .frame(width: 70, alignment: .trailing)
+                                .foregroundStyle(.secondary)
+
+                            Text("↓ \(formatBps(t.downBps))")
+                                .frame(width: 110, alignment: .trailing)
+                                .foregroundStyle(.secondary)
+
+                            Text("↑ \(formatBps(t.upBps))")
+                                .frame(width: 110, alignment: .trailing)
+                                .foregroundStyle(.secondary)
+                        }
+                        .tag(t.id)
                     }
+                }
+                .frame(minWidth: 650)
 
-                    Spacer()
-
-                    Text(stateLabel(t.state))
-                        .frame(width: 100, alignment: .leading)
-
-                    Text("\(t.peers)p/\(t.seeds)s")
-                        .frame(width: 70, alignment: .trailing)
-
-                    Text("↓ \(formatBps(t.downBps))")
-                        .frame(width: 110, alignment: .trailing)
-
-                    Text("↑ \(formatBps(t.upBps))")
-                        .frame(width: 110, alignment: .trailing)
+                if let id = selectedTorrentID,
+                   let torrent = engine.torrents.first(where: { $0.id == id }) {
+                    TorrentInspectorView(torrent: torrent, engine: engine)
+                        .frame(minWidth: 320, idealWidth: 360)
+                } else {
+                    VStack {
+                        Text("Select a torrent")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding()
+                    .frame(minWidth: 320, idealWidth: 360)
                 }
             }
         }
         .padding()
-        .frame(minWidth: 900, minHeight: 500)
+        .frame(minWidth: 1050, minHeight: 560)
     }
 
     private func formatBps(_ bps: Int) -> String {

@@ -9,8 +9,8 @@ import Foundation
 import Combine
 import TorrentCore
 
-struct TorrentRow: Identifiable {
-    let id: String            // stable id from info-hash
+struct TorrentRow: Identifiable, Equatable {
+    let id: String              // info-hash hex from libtorrent (stable for UI)
     let name: String
     let progress: Double
     let downBps: Int
@@ -19,6 +19,7 @@ struct TorrentRow: Identifiable {
     let seeds: Int
     let state: Int
     let isSeeding: Bool
+    let category: String?
 }
 
 @MainActor
@@ -31,41 +32,58 @@ final class TorrentEngine: ObservableObject {
     init() {
         session = st_session_create(6881, 6891)
 
+        // Restore previously saved torrents
+        let saved = TorrentStore.load()
+        for item in saved {
+            _ = addMagnet(item.magnet, savePath: item.savePath, category: item.category, persist: false)
+        }
+
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self else { return }
-            // Timer callback isn't guaranteed to be on MainActor in Swift 6.
-            DispatchQueue.main.async {
-                self.poll()
-            }
+            DispatchQueue.main.async { self.poll() }
         }
     }
 
     deinit {
         timer?.invalidate()
-        timer = nil
-
-        if let s = session {
-            st_session_destroy(s)
-            session = nil
-        }
+        if let s = session { st_session_destroy(s) }
     }
 
-    func addMagnet(_ magnet: String, savePath: String) -> String? {
+    func addMagnet(_ magnet: String, savePath: String, category: String? = nil, persist: Bool = true) -> String? {
         guard let s = session else { return "Session not initialised" }
 
-        // Ensure save path exists
+        let trimmedMagnet = magnet.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMagnet.isEmpty else { return "Empty magnet link" }
+
         do {
-            try FileManager.default.createDirectory(
-                atPath: savePath,
-                withIntermediateDirectories: true
-            )
+            try FileManager.default.createDirectory(atPath: savePath, withIntermediateDirectories: true)
         } catch {
             return "Failed to create save directory: \(error.localizedDescription)"
         }
 
-        var errBuf = Array<CChar>(repeating: 0, count: 512)
+        if persist {
+            var items = TorrentStore.load()
 
-        let ok = magnet.withCString { magnetC in
+            let key = MagnetKeyExtractor.key(from: trimmedMagnet) ?? trimmedMagnet
+            let entry = StoredTorrent(
+                key: key,
+                magnet: trimmedMagnet,
+                savePath: savePath,
+                category: normalizeCategory(category)
+            )
+
+            if let idx = items.firstIndex(where: { $0.key == key }) {
+                // Update existing entry (category/path may change)
+                items[idx] = entry
+            } else {
+                items.append(entry)
+            }
+
+            TorrentStore.save(items)
+        }
+
+        var errBuf = Array<CChar>(repeating: 0, count: 512)
+        let ok = trimmedMagnet.withCString { magnetC in
             savePath.withCString { pathC in
                 st_add_magnet(s, magnetC, pathC, &errBuf, Int32(errBuf.count))
             }
@@ -73,6 +91,52 @@ final class TorrentEngine: ObservableObject {
 
         return ok ? nil : String(cString: errBuf)
     }
+
+    // MARK: - Category
+
+    func setCategory(_ category: String?, for torrentID: String) {
+        var items = TorrentStore.load()
+
+        // Try match by torrentID directly (works for btih hex and for btmh sha256 hex)
+        if let idx = items.firstIndex(where: { $0.key == torrentID }) {
+            items[idx].category = normalizeCategory(category)
+            TorrentStore.save(items)
+            poll()
+            return
+        }
+
+        // Fallback: match via magnet-derived key
+        // (in case libtorrent id differs from btih/btmh for some edge case)
+        if let idx = items.firstIndex(where: { MagnetKeyExtractor.key(from: $0.magnet) == torrentID }) {
+            items[idx].category = normalizeCategory(category)
+            TorrentStore.save(items)
+            poll()
+            return
+        }
+
+        // Last resort: try contains (old behaviour)
+        if let idx = items.firstIndex(where: { $0.magnet.contains(torrentID) }) {
+            items[idx].category = normalizeCategory(category)
+            TorrentStore.save(items)
+            poll()
+            return
+        }
+    }
+
+    private func categoryForTorrent(id: String) -> String? {
+        let items = TorrentStore.load()
+        if let exact = items.first(where: { $0.key == id }) { return exact.category }
+        // fallback for older saved entries
+        return items.first(where: { $0.magnet.contains(id) })?.category
+    }
+
+    private func normalizeCategory(_ s: String?) -> String? {
+        guard let s else { return nil }
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+
+    // MARK: - Poll
 
     private func poll() {
         guard let s = session else { return }
@@ -104,7 +168,8 @@ final class TorrentEngine: ObservableObject {
                     peers: Int(st.num_peers),
                     seeds: Int(st.num_seeds),
                     state: Int(st.state),
-                    isSeeding: st.is_seeding
+                    isSeeding: st.is_seeding,
+                    category: categoryForTorrent(id: id)
                 )
             )
         }
