@@ -11,6 +11,9 @@ It's distinguishing features are:
 * it auto moves completed downloads based on category
 * it hides the lengthy torrent names i.e. "The.Room.2003.xX-ligmaman-Xx.BRRIP.h265.rePACK" in favour of proper titles like "The Room (2009)" and movie/tv show posters.
 
+> ❗️ BTW:
+> swiftTorrent is currently built for Apple Silicon only
+
 It is focussed mostly on Movie & TV Show downloads via its integration with Trakt and tvdb.
 
 ![swifttorrent](https://github.com/user-attachments/assets/9a2b06fe-6d07-4cb6-a9c2-a6c4c284b0b6)
