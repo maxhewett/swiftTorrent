@@ -13,5 +13,9 @@ struct swiftTorrentApp: App {
         WindowGroup {
             ContentView()
         }
+
+        Settings {
+            SettingsView()
+        }
     }
 }

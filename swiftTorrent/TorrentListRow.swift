@@ -9,13 +9,17 @@ import SwiftUI
 
 struct TorrentListRow: View {
     let t: TorrentRow
+    @ObservedObject var engine: TorrentEngine
 
     var body: some View {
         HStack(spacing: 14) {
+
+            posterView
+
             StatusIcon(state: t.state, isSeeding: t.isSeeding, isPaused: t.isPaused)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(t.name)
+                Text(displayName)
                     .lineLimit(1)
 
                 if shouldShowProgressBar {
@@ -23,11 +27,10 @@ struct TorrentListRow: View {
                         .animation(nil, value: t.progress)
                 }
 
-                if let eta = etaString() {
+                if let statusLine = statusLineText {
                     HStack(spacing: 6) {
-                        Image(systemName: "clock")
-                            .foregroundStyle(.secondary)
-                        Text("\(eta) • \(percentString)")
+                        if showClockIcon { Image(systemName: "clock").foregroundStyle(.secondary) }
+                        Text(statusLine)
                             .foregroundStyle(.secondary)
                     }
                     .font(.caption)
@@ -45,16 +48,90 @@ struct TorrentListRow: View {
             TorrentWindOverlay(t: t)
                 .allowsHitTesting(false)
         }
+        .onAppear {
+            engine.enrichIfNeeded(for: t)
+        }
     }
 
+    // MARK: - Trakt Display
+
+    private var displayName: String {
+        engine.mediaByTorrentID[t.id]?.title ?? t.name
+    }
+
+    private var posterURL: URL? {
+        engine.mediaByTorrentID[t.id]?.posterURL
+    }
+
+    private var posterView: some View {
+        Group {
+            if let url = posterURL {
+                AsyncImage(url: url, transaction: Transaction(animation: nil)) { phase in
+                    switch phase {
+                    case .empty:
+                        posterPlaceholder
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        posterPlaceholder
+                    @unknown default:
+                        posterPlaceholder
+                    }
+                }
+            } else {
+                posterPlaceholder
+            }
+        }
+        .frame(width: 34, height: 52) // tweak if you want bigger
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(.separator, lineWidth: 0.5)
+        )
+    }
+
+    private var posterPlaceholder: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(.quaternary)
+            Image(systemName: "photo")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Progress / Status
+
     private var shouldShowProgressBar: Bool {
-        // Hide when seeding (your state 5) or marked as seeding
-        !(t.isSeeding || t.state == 5)
+        if t.isSeeding || t.state == 5 { return false }
+        if t.progress >= 0.999 { return false }
+        return true
     }
 
     private var percentString: String {
         let p = max(0, min(100, Int((t.progress * 100).rounded())))
         return "\(p)%"
+    }
+
+    private var showClockIcon: Bool {
+        etaString() != nil
+    }
+
+    private var statusLineText: String? {
+        if t.isPaused {
+            return "Paused • \(percentString)"
+        }
+
+        if t.progress >= 0.999 {
+            return "Download complete ✓"
+        }
+
+        if let eta = etaString() {
+            return "\(eta) • \(percentString)"
+        }
+
+        return percentString
     }
 
     // MARK: - Subviews
@@ -90,6 +167,7 @@ struct TorrentListRow: View {
     private func etaString() -> String? {
         guard !t.isPaused else { return nil }
         guard t.progress < 0.999 else { return nil }
+        guard !t.isSeeding, t.state != 5 else { return nil }
         guard t.downBps > 0 else { return nil }
 
         let remaining = max(Int64(0), t.totalWanted - t.totalWantedDone)

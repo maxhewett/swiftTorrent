@@ -28,7 +28,7 @@ struct ContentView: View {
                 List(selection: $selectedTorrentID) {
                     Section {
                         ForEach(grouped.tv) { t in
-                            TorrentListRow(t: t)
+                            TorrentListRow(t: t, engine: engine)
                                 .tag(t.id)
                         }
                     } header: {
@@ -38,7 +38,7 @@ struct ContentView: View {
 
                     Section {
                         ForEach(grouped.movies) { t in
-                            TorrentListRow(t: t)
+                            TorrentListRow(t: t, engine: engine)
                                 .tag(t.id)
                         }
                     } header: {
@@ -49,7 +49,7 @@ struct ContentView: View {
                     if !grouped.other.isEmpty {
                         Section {
                             ForEach(grouped.other) { t in
-                                TorrentListRow(t: t)
+                                TorrentListRow(t: t, engine: engine)
                                     .tag(t.id)
                             }
                         } header: {
@@ -77,6 +77,10 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                SettingsLink {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .keyboardShortcut(",", modifiers: [.command])
                 Button {
                     showingAddSheet = true
                 } label: {

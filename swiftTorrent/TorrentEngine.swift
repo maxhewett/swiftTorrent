@@ -9,6 +9,10 @@ import Foundation
 import Combine
 import TorrentCore
 
+#if canImport(AppKit)
+import AppKit
+#endif
+
 struct TorrentRow: Identifiable, Hashable {
     let id: String
     let coreIndex: Int
@@ -41,13 +45,62 @@ struct TorrentFile: Identifiable, Hashable {
 @MainActor
 final class TorrentEngine: ObservableObject {
     @Published var torrents: [TorrentRow] = []
-    
     @Published var filesByTorrentID: [String: [TorrentFile]] = [:]
+    @Published var mediaByTorrentID: [String: MediaMetadata] = [:]
+
+    private var session: STSessionRef?
+    private var timer: Timer?
+
+    // MARK: - Pause persistence
+    private let pausedKeysDefaultsKey = "swiftTorrent.pausedTorrentKeys"
+
+    init() {
+        session = st_session_create(6881, 6891)
+
+        // Load persisted pause set FIRST
+        let pausedKeys = loadPausedKeys()
+
+        // Re-add saved torrents (don’t re-persist)
+        let saved = TorrentStore.load()
+        for item in saved {
+            _ = addMagnet(item.magnet, savePath: item.savePath, category: item.category, persist: false)
+        }
+
+        // Start polling
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            DispatchQueue.main.async { self.poll() }
+        }
+
+        // Enforce pause/resume after things have had a moment to appear in the session
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.applyPausedKeys(pausedKeys)
+        }
+
+        #if canImport(AppKit)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
+        #endif
+    }
+
+    deinit {
+        timer?.invalidate()
+        #if canImport(AppKit)
+        NotificationCenter.default.removeObserver(self)
+        #endif
+        if let s = session { st_session_destroy(s) }
+    }
+
+    // MARK: - Files
 
     func refreshFiles(for torrentID: String) {
         guard let info = torrents.first(where: { $0.id == torrentID }) else { return }
         let idx = info.coreIndex
-        guard idx >= 0 else { return }
+        guard idx >= 0, let session else { return }
 
         let count = Int(st_get_torrent_file_count(session, Int32(idx)))
         guard count > 0 else {
@@ -71,28 +124,89 @@ final class TorrentEngine: ObservableObject {
 
         filesByTorrentID[torrentID] = out
     }
+    
+    func enrichIfNeeded(for torrent: TorrentRow) {
+        // already cached
+        if mediaByTorrentID[torrent.id] != nil { return }
 
-    private var session: STSessionRef?
-    private var timer: Timer?
+        // crude hint from category (you can refine later)
+        let c = (torrent.category ?? "").lowercased()
+        let typeHint: MediaMetadata.MediaType =
+            (c.contains("tv") || c.contains("sonarr")) ? .show :
+            (c.contains("movie") || c.contains("radarr")) ? .movie :
+            .movie
 
-    init() {
-        session = st_session_create(6881, 6891)
+        let parsed = TorrentNameParser.parse(torrent.name)
 
-        let saved = TorrentStore.load()
-        for item in saved {
-            _ = addMagnet(item.magnet, savePath: item.savePath, category: item.category, persist: false)
-        }
+        Task {
+            do {
+                // TODO: move clientID into settings later
+                let trakt = TraktClient(clientID: "eb92f2cb922619e94a4ca0adcfd9572fc0397acb18a33cb6e65b7f2219983d9e")
 
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            DispatchQueue.main.async { self.poll() }
+                switch typeHint {
+                case .movie:
+                    if let m = try await trakt.searchMovie(query: parsed.query, year: parsed.year) {
+                        let meta = MediaMetadata(
+                            type: .movie,
+                            title: m.title,
+                            year: m.year,
+                            traktID: m.ids.trakt,
+                            tmdbID: m.ids.tmdb,
+                            overview: m.overview,
+                            posterURL: nil
+                        )
+                        await MainActor.run { self.mediaByTorrentID[torrent.id] = meta }
+                    } else {
+                        // fallback: try show search if movie fails
+                        if let s = try await trakt.searchShow(query: parsed.query, year: parsed.year) {
+                            let meta = MediaMetadata(
+                                type: .show,
+                                title: s.title,
+                                year: s.year,
+                                traktID: s.ids.trakt,
+                                tmdbID: s.ids.tmdb,
+                                overview: s.overview,
+                                posterURL: nil
+                            )
+                            await MainActor.run { self.mediaByTorrentID[torrent.id] = meta }
+                        }
+                    }
+
+                case .show:
+                    if let s = try await trakt.searchShow(query: parsed.query, year: parsed.year) {
+                        let meta = MediaMetadata(
+                            type: .show,
+                            title: s.title,
+                            year: s.year,
+                            traktID: s.ids.trakt,
+                            tmdbID: s.ids.tmdb,
+                            overview: s.overview,
+                            posterURL: nil
+                        )
+                        await MainActor.run { self.mediaByTorrentID[torrent.id] = meta }
+                    } else {
+                        // fallback: try movie
+                        if let m = try await trakt.searchMovie(query: parsed.query, year: parsed.year) {
+                            let meta = MediaMetadata(
+                                type: .movie,
+                                title: m.title,
+                                year: m.year,
+                                traktID: m.ids.trakt,
+                                tmdbID: m.ids.tmdb,
+                                overview: m.overview,
+                                posterURL: nil
+                            )
+                            await MainActor.run { self.mediaByTorrentID[torrent.id] = meta }
+                        }
+                    }
+                }
+            } catch {
+                // ignore for now
+            }
         }
     }
 
-    deinit {
-        timer?.invalidate()
-        if let s = session { st_session_destroy(s) }
-    }
+    // MARK: - Add
 
     func addMagnet(_ magnet: String, savePath: String, category: String? = nil, persist: Bool = true) -> String? {
         guard let s = session else { return "Session not initialised" }
@@ -177,7 +291,7 @@ final class TorrentEngine: ObservableObject {
 
     private func normalizeCategory(_ s: String?) -> String? {
         guard let s else { return nil }
-        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return t.isEmpty ? nil : t
     }
 
@@ -225,4 +339,43 @@ final class TorrentEngine: ObservableObject {
 
         torrents = rows
     }
+
+    // MARK: - Pause persistence internals
+
+    private func loadPausedKeys() -> Set<String> {
+        let arr = UserDefaults.standard.stringArray(forKey: pausedKeysDefaultsKey) ?? []
+        return Set(arr)
+    }
+
+    private func savePausedKeys(_ keys: Set<String>) {
+        UserDefaults.standard.set(Array(keys), forKey: pausedKeysDefaultsKey)
+    }
+
+    /// Enforce: anything not in pausedKeys should be resumed.
+    private func applyPausedKeys(_ pausedKeys: Set<String>) {
+        guard session != nil else { return }
+
+        // Resume everything that shouldn't be paused, and pause the ones that should.
+        // We use TorrentStore keys (usually infohash) as the control IDs.
+        let saved = TorrentStore.load()
+        for item in saved {
+            let key = item.key
+
+            if pausedKeys.contains(key) {
+                key.withCString { st_torrent_pause(session, $0) }
+            } else {
+                key.withCString { st_torrent_resume(session, $0) }
+            }
+        }
+
+        poll()
+    }
+
+    #if canImport(AppKit)
+    @objc private func appWillTerminate() {
+        // Snapshot current pause states
+        let paused = Set(torrents.filter { $0.isPaused }.map(\.id))
+        savePausedKeys(paused)
+    }
+    #endif
 }
