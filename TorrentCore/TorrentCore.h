@@ -57,6 +57,19 @@ bool st_torrent_pause(STSessionRef session, const char* torrent_id_hex);
 bool st_torrent_resume(STSessionRef session, const char* torrent_id_hex);
 bool st_torrent_remove(STSessionRef session, const char* torrent_id_hex, bool delete_files);
 
+// File list
+int32_t st_get_torrent_file_count(STSessionRef session, int32_t torrent_index);
+
+// Returns true if file exists. out_path is valid until next call on same thread.
+bool st_get_torrent_file_info(
+    STSessionRef session,
+    int32_t torrent_index,
+    int32_t file_index,
+    const char** out_path,
+    int64_t* out_size,
+    int64_t* out_done
+);
+
 #ifdef __cplusplus
 }
 #endif

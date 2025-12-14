@@ -166,6 +166,57 @@ int32_t st_get_torrents(STSessionRef session, STTorrentStatus* out_items, int32_
     return count;
 }
 
+int32_t st_get_torrent_file_count(STSessionRef session, int32_t torrent_index) {
+    auto s = reinterpret_cast<SessionWrap*>(session);
+    if (!s) return 0;
+    if (torrent_index < 0 || torrent_index >= (int)s->handles.size()) return 0;
+
+    lt::torrent_handle h = s->handles[torrent_index];
+    if (!h.is_valid()) return 0;
+
+    auto ti = h.torrent_file();
+    if (!ti) return 0;
+
+    return (int32_t)ti->files().num_files();
+}
+
+bool st_get_torrent_file_info(
+    STSessionRef session,
+    int32_t torrent_index,
+    int32_t file_index,
+    const char** out_path,
+    int64_t* out_size,
+    int64_t* out_done
+) {
+    auto s = reinterpret_cast<SessionWrap*>(session);
+    if (!s) return false;
+    if (!out_path || !out_size || !out_done) return false;
+    if (torrent_index < 0 || torrent_index >= (int)s->handles.size()) return false;
+
+    lt::torrent_handle h = s->handles[torrent_index];
+    if (!h.is_valid()) return false;
+
+    auto ti = h.torrent_file();
+    if (!ti) return false;
+
+    int num = ti->files().num_files();
+    if (file_index < 0 || file_index >= num) return false;
+
+    // file_progress gives bytes done per file
+    std::vector<std::int64_t> prog;
+    h.file_progress(prog, lt::torrent_handle::piece_granularity);
+
+    std::string p = ti->files().file_path(file_index);
+    static thread_local std::string tl_path;
+    tl_path = p;
+
+    *out_path = tl_path.c_str();
+    *out_size = (int64_t)ti->files().file_size(file_index);
+    *out_done = (file_index < (int)prog.size()) ? (int64_t)prog[file_index] : 0;
+
+    return true;
+}
+
 const char* st_get_torrent_name(STSessionRef session, int32_t index) {
     if (!session) return "";
     auto* w = (SessionWrap*)session;

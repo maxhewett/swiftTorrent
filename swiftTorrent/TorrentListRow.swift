@@ -18,13 +18,19 @@ struct TorrentListRow: View {
                 Text(t.name)
                     .lineLimit(1)
 
-                ProgressView(value: t.progress)
-                    .animation(nil, value: t.progress)
+                if shouldShowProgressBar {
+                    ProgressView(value: t.progress)
+                        .animation(nil, value: t.progress)
+                }
 
                 if let eta = etaString() {
-                    Label(eta, systemImage: "clock")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock")
+                            .foregroundStyle(.secondary)
+                        Text("\(eta) • \(percentString)")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
                 }
             }
 
@@ -39,6 +45,16 @@ struct TorrentListRow: View {
             TorrentWindOverlay(t: t)
                 .allowsHitTesting(false)
         }
+    }
+
+    private var shouldShowProgressBar: Bool {
+        // Hide when seeding (your state 5) or marked as seeding
+        !(t.isSeeding || t.state == 5)
+    }
+
+    private var percentString: String {
+        let p = max(0, min(100, Int((t.progress * 100).rounded())))
+        return "\(p)%"
     }
 
     // MARK: - Subviews
@@ -107,7 +123,7 @@ struct TorrentListRow: View {
     }
 }
 
-// MARK: - Status Icon (moved here so TorrentListRow is self-contained)
+// MARK: - Status Icon
 
 private struct StatusIcon: View {
     let state: Int

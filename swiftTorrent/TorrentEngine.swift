@@ -9,30 +9,68 @@ import Foundation
 import Combine
 import TorrentCore
 
-struct TorrentRow: Identifiable, Equatable {
+struct TorrentRow: Identifiable, Hashable {
     let id: String
-    let name: String
+    let coreIndex: Int
+    var name: String
+    var progress: Double
+    var totalWanted: Int64
+    var totalWantedDone: Int64
+    var downBps: Int
+    var upBps: Int
+    var peers: Int
+    var seeds: Int
+    var state: Int
+    var isSeeding: Bool
+    var isPaused: Bool
+    var category: String?
+}
 
-    let progress: Double
-    let totalWanted: Int64
-    let totalWantedDone: Int64
+struct TorrentFile: Identifiable, Hashable {
+    let id: Int
+    let path: String
+    let size: Int64
+    let done: Int64
 
-    let downBps: Int
-    let upBps: Int
-
-    let peers: Int
-    let seeds: Int
-
-    let state: Int
-    let isSeeding: Bool
-    let isPaused: Bool
-
-    let category: String?
+    var progress: Double {
+        guard size > 0 else { return 0 }
+        return min(1.0, max(0.0, Double(done) / Double(size)))
+    }
 }
 
 @MainActor
 final class TorrentEngine: ObservableObject {
     @Published var torrents: [TorrentRow] = []
+    
+    @Published var filesByTorrentID: [String: [TorrentFile]] = [:]
+
+    func refreshFiles(for torrentID: String) {
+        guard let info = torrents.first(where: { $0.id == torrentID }) else { return }
+        let idx = info.coreIndex
+        guard idx >= 0 else { return }
+
+        let count = Int(st_get_torrent_file_count(session, Int32(idx)))
+        guard count > 0 else {
+            filesByTorrentID[torrentID] = []
+            return
+        }
+
+        var out: [TorrentFile] = []
+        out.reserveCapacity(count)
+
+        for i in 0..<count {
+            var cPath: UnsafePointer<CChar>?
+            var size: Int64 = 0
+            var done: Int64 = 0
+
+            let ok = st_get_torrent_file_info(session, Int32(idx), Int32(i), &cPath, &size, &done)
+            if ok, let cPath {
+                out.append(TorrentFile(id: i, path: String(cString: cPath), size: size, done: done))
+            }
+        }
+
+        filesByTorrentID[torrentID] = out
+    }
 
     private var session: STSessionRef?
     private var timer: Timer?
@@ -168,6 +206,7 @@ final class TorrentEngine: ObservableObject {
             rows.append(
                 TorrentRow(
                     id: id,
+                    coreIndex: i,
                     name: name,
                     progress: Double(st.progress),
                     totalWanted: Int64(st.total_wanted),

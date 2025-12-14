@@ -61,6 +61,33 @@ struct TorrentInspectorView: View {
             .buttonStyle(.bordered)
 
             Spacer()
+            GroupBox("Files") {
+                let files = engine.filesByTorrentID[torrent.id] ?? []
+
+                if files.isEmpty {
+                    Text("No file list available yet.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    List(files) { f in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(f.path).lineLimit(1)
+                            ProgressView(value: f.progress)
+                            Text("\(formatBytes(f.done)) / \(formatBytes(f.size))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .frame(minHeight: 180)
+                }
+            }
+            .onAppear {
+                engine.refreshFiles(for: torrent.id)
+            }
+            .onChange(of: torrent.id) { _, newID in
+                engine.refreshFiles(for: newID)
+            }
         }
         .padding()
         .onAppear {
@@ -78,6 +105,17 @@ struct TorrentInspectorView: View {
         let kb = Double(bps) / 1024.0
         if kb < 1024 { return String(format: "%.0f KB/s", kb) }
         return String(format: "%.1f MB/s", kb / 1024.0)
+    }
+    
+    private func formatBytes(_ v: Int64) -> String {
+        let b = Double(v)
+        let kb = b / 1024
+        let mb = kb / 1024
+        let gb = mb / 1024
+        if gb >= 1 { return String(format: "%.2f GB", gb) }
+        if mb >= 1 { return String(format: "%.1f MB", mb) }
+        if kb >= 1 { return String(format: "%.0f KB", kb) }
+        return "\(v) B"
     }
 
     private func stateLabel(_ s: Int) -> String {
