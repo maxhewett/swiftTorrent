@@ -10,15 +10,23 @@ import Combine
 import TorrentCore
 
 struct TorrentRow: Identifiable, Equatable {
-    let id: String              // info-hash hex from libtorrent (stable for UI)
+    let id: String
     let name: String
+
     let progress: Double
+
+    let totalWanted: Int64
+    let totalWantedDone: Int64
+
     let downBps: Int
     let upBps: Int
+
     let peers: Int
     let seeds: Int
+
     let state: Int
     let isSeeding: Bool
+
     let category: String?
 }
 
@@ -73,7 +81,6 @@ final class TorrentEngine: ObservableObject {
             )
 
             if let idx = items.firstIndex(where: { $0.key == key }) {
-                // Update existing entry (category/path may change)
                 items[idx] = entry
             } else {
                 items.append(entry)
@@ -97,7 +104,6 @@ final class TorrentEngine: ObservableObject {
     func setCategory(_ category: String?, for torrentID: String) {
         var items = TorrentStore.load()
 
-        // Try match by torrentID directly (works for btih hex and for btmh sha256 hex)
         if let idx = items.firstIndex(where: { $0.key == torrentID }) {
             items[idx].category = normalizeCategory(category)
             TorrentStore.save(items)
@@ -105,8 +111,6 @@ final class TorrentEngine: ObservableObject {
             return
         }
 
-        // Fallback: match via magnet-derived key
-        // (in case libtorrent id differs from btih/btmh for some edge case)
         if let idx = items.firstIndex(where: { MagnetKeyExtractor.key(from: $0.magnet) == torrentID }) {
             items[idx].category = normalizeCategory(category)
             TorrentStore.save(items)
@@ -114,7 +118,6 @@ final class TorrentEngine: ObservableObject {
             return
         }
 
-        // Last resort: try contains (old behaviour)
         if let idx = items.firstIndex(where: { $0.magnet.contains(torrentID) }) {
             items[idx].category = normalizeCategory(category)
             TorrentStore.save(items)
@@ -126,7 +129,6 @@ final class TorrentEngine: ObservableObject {
     private func categoryForTorrent(id: String) -> String? {
         let items = TorrentStore.load()
         if let exact = items.first(where: { $0.key == id }) { return exact.category }
-        // fallback for older saved entries
         return items.first(where: { $0.magnet.contains(id) })?.category
     }
 
@@ -163,6 +165,8 @@ final class TorrentEngine: ObservableObject {
                     id: id,
                     name: name,
                     progress: Double(st.progress),
+                    totalWanted: Int64(st.total_wanted),
+                    totalWantedDone: Int64(st.total_wanted_done),
                     downBps: Int(st.download_rate),
                     upBps: Int(st.upload_rate),
                     peers: Int(st.num_peers),
