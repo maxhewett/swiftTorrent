@@ -5,174 +5,220 @@
 //  Created by Max Hewett on 14/12/2025.
 //
 
-// TorrentCore.mm
 #import "TorrentCore.h"
-
-#include <cstdio>
-#include <string>
-#include <vector>
 
 #include <libtorrent/session.hpp>
 #include <libtorrent/settings_pack.hpp>
-#include <libtorrent/add_torrent_params.hpp>
-#include <libtorrent/magnet_uri.hpp>
 #include <libtorrent/torrent_handle.hpp>
+#include <libtorrent/magnet_uri.hpp>
+#include <libtorrent/add_torrent_params.hpp>
 #include <libtorrent/torrent_status.hpp>
-#include <libtorrent/error_code.hpp>
-#include <libtorrent/torrent_flags.hpp>
-#include <libtorrent/hex.hpp>          // lt::aux::to_hex
-#include <libtorrent/sha1_hash.hpp>    // info_hash_t
+
+#include <vector>
+#include <string>
+#include <cstring>
+#include <mutex>
 
 namespace lt = libtorrent;
 
-struct STSession {
-    lt::session ses;
-    explicit STSession(lt::settings_pack pack) : ses(std::move(pack)) {}
+struct SessionWrap {
+    lt::session sess;
+    std::mutex  mtx;
+
+    // Snapshot of handles for index-based getters
+    std::vector<lt::torrent_handle> handles;
+
+    // Snapshot strings (stable pointers until next refresh)
+    std::vector<std::string> names;
+    std::vector<std::string> ids;
 };
 
-// Cache values for the latest st_get_torrents() snapshot.
-// Valid until next st_get_torrents() call.
-static std::vector<std::string> g_name_cache;
-static std::vector<std::string> g_id_cache;
+static std::string to_hex_id(const lt::torrent_handle& h) {
+    // For v1 torrents: info-hash v1 is sha1 (20 bytes) => 40 hex
+    // For v2: may have v2 hash; we’ll prefer v1 when available.
+    lt::info_hash_t ih = h.info_hashes();
+    lt::sha1_hash v1 = ih.v1;
+    auto const* b = v1.data();
 
-static void write_err(char* buf, int32_t len, const char* msg) {
-    if (!buf || len <= 0) return;
-    std::snprintf(buf, (size_t)len, "%s", msg ? msg : "");
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    out.resize(40);
+
+    for (int i = 0; i < 20; ++i) {
+        unsigned char c = static_cast<unsigned char>(b[i]);
+        out[i*2]     = hex[(c >> 4) & 0xF];
+        out[i*2 + 1] = hex[c & 0xF];
+    }
+    return out;
 }
 
-STSessionRef st_session_create(uint16_t listen_port_start, uint16_t /*listen_port_end*/) {
-    lt::settings_pack pack;
+static lt::torrent_handle find_handle_by_id(SessionWrap* w, const char* torrent_id_hex) {
+    if (!torrent_id_hex) return lt::torrent_handle();
 
-    pack.set_int(lt::settings_pack::alert_mask,
-                 lt::alert_category::error | lt::alert_category::status);
-
-    // Explicit listen interfaces (libtorrent 2.0 style)
-    {
-        char buf[128];
-        std::snprintf(buf, sizeof(buf), "0.0.0.0:%u,[::]:%u", listen_port_start, listen_port_start);
-        pack.set_str(lt::settings_pack::listen_interfaces, buf);
+    std::string target(torrent_id_hex);
+    for (auto const& h : w->handles) {
+        if (!h.is_valid()) continue;
+        if (to_hex_id(h) == target) return h;
     }
+    return lt::torrent_handle();
+}
 
-    // Enable discovery
-    pack.set_bool(lt::settings_pack::enable_dht, true);
-    pack.set_bool(lt::settings_pack::enable_lsd, true);
-    pack.set_bool(lt::settings_pack::enable_upnp, true);
-    pack.set_bool(lt::settings_pack::enable_natpmp, true);
+extern "C" {
 
-    // Help DHT bootstrap quickly
-    pack.set_str(
-        lt::settings_pack::dht_bootstrap_nodes,
-        "router.bittorrent.com:6881,"
-        "dht.transmissionbt.com:6881,"
-        "router.utorrent.com:6881"
-    );
+STSessionRef st_session_create(uint16_t listen_port_start, uint16_t listen_port_end) {
+    auto* w = new SessionWrap();
 
-    auto* s = new STSession(std::move(pack));
-    return (STSessionRef)s;
+    lt::settings_pack p;
+    p.set_bool(lt::settings_pack::enable_dht, true);
+    p.set_bool(lt::settings_pack::enable_lsd, true);
+    p.set_bool(lt::settings_pack::enable_upnp, true);
+    p.set_bool(lt::settings_pack::enable_natpmp, true);
+
+    // Libtorrent 2.x uses listen_interfaces
+    // Example: "0.0.0.0:6881,[::]:6881"
+    std::string iface = "0.0.0.0:" + std::to_string(listen_port_start) + ",[::]:" + std::to_string(listen_port_start);
+    p.set_str(lt::settings_pack::listen_interfaces, iface);
+
+    w->sess.apply_settings(p);
+    return (STSessionRef)w;
 }
 
 void st_session_destroy(STSessionRef session) {
     if (!session) return;
-    delete (STSession*)session;
+    auto* w = (SessionWrap*)session;
+    delete w;
 }
 
-bool st_add_magnet(STSessionRef session,
-                   const char* magnet_uri,
-                   const char* save_path,
-                   char* err_buf,
-                   int32_t err_buf_len) {
-    if (!session || !magnet_uri || !save_path) {
-        write_err(err_buf, err_buf_len, "Invalid arguments");
+bool st_add_magnet(
+    STSessionRef session,
+    const char* magnet_uri,
+    const char* save_path,
+    char* err_buf,
+    int32_t err_buf_len
+) {
+    if (!session || !magnet_uri || !save_path) return false;
+
+    auto* w = (SessionWrap*)session;
+
+    try {
+        lt::add_torrent_params atp = lt::parse_magnet_uri(magnet_uri);
+        atp.save_path = save_path;
+
+        // Don’t let session auto-management override pause/resume decisions
+        atp.flags &= ~lt::torrent_flags::auto_managed;
+
+        std::lock_guard<std::mutex> lock(w->mtx);
+        w->sess.async_add_torrent(std::move(atp));
+        return true;
+    } catch (std::exception const& e) {
+        if (err_buf && err_buf_len > 0) {
+            std::snprintf(err_buf, (size_t)err_buf_len, "%s", e.what());
+        }
         return false;
     }
-
-    auto* s = (STSession*)session;
-
-    lt::error_code ec;
-    lt::add_torrent_params p = lt::parse_magnet_uri(std::string(magnet_uri), ec);
-    if (ec) {
-        write_err(err_buf, err_buf_len, ec.message().c_str());
-        return false;
-    }
-
-    // Dev assist: if magnet has no trackers, add a couple public ones
-    if (p.trackers.empty()) {
-        p.trackers.push_back("udp://tracker.opentrackr.org:1337/announce");
-        p.trackers.push_back("udp://open.stealth.si:80/announce");
-    }
-
-    p.save_path = std::string(save_path);
-
-    s->ses.add_torrent(std::move(p), ec);
-    if (ec) {
-        write_err(err_buf, err_buf_len, ec.message().c_str());
-        return false;
-    }
-
-    write_err(err_buf, err_buf_len, "");
-    return true;
 }
 
 int32_t st_get_torrents(STSessionRef session, STTorrentStatus* out_items, int32_t max_items) {
     if (!session || !out_items || max_items <= 0) return 0;
+    auto* w = (SessionWrap*)session;
 
-    auto* s = (STSession*)session;
+    std::lock_guard<std::mutex> lock(w->mtx);
 
-    std::vector<lt::torrent_handle> handles = s->ses.get_torrents();
+    std::vector<lt::torrent_handle> ts = w->sess.get_torrents();
 
-    g_name_cache.clear();
-    g_id_cache.clear();
-    g_name_cache.reserve(handles.size());
-    g_id_cache.reserve(handles.size());
+    w->handles = ts;
+    w->names.clear();
+    w->ids.clear();
 
     int32_t count = 0;
 
-    for (auto& h : handles) {
+    for (auto const& h : ts) {
+        if (!h.is_valid()) continue;
         if (count >= max_items) break;
 
         lt::torrent_status st = h.status();
 
-        // Cache name
-        g_name_cache.push_back(st.name);
-
-        // Cache stable id (best info-hash; hex)
-        {
-            auto ih = st.info_hashes.get_best();
-            g_id_cache.push_back(lt::aux::to_hex(ih));
-        }
-
         STTorrentStatus out{};
         out.progress = st.progress;
+        out.total_wanted = st.total_wanted;
+        out.total_wanted_done = st.total_wanted_done;
 
-        out.total_wanted = (int64_t)st.total_wanted;
-        out.total_wanted_done = (int64_t)st.total_wanted_done;
+        out.download_rate = st.download_rate;
+        out.upload_rate = st.upload_rate;
 
-        out.download_rate = (int32_t)st.download_rate;
-        out.upload_rate = (int32_t)st.upload_rate;
-
-        out.num_peers = (int32_t)st.num_peers;
-        out.num_seeds = (int32_t)st.num_seeds;
+        out.num_peers = st.num_peers;
+        out.num_seeds = st.num_seeds;
 
         out.state = (int32_t)st.state;
 
-        out.is_seeding = (st.state == lt::torrent_status::seeding);
-        out.is_paused  = (st.flags & lt::torrent_flags::paused) != 0;
-        out.has_error  = (bool)st.errc;
+        out.is_seeding = st.is_seeding;
+        out.is_paused = (st.flags & lt::torrent_flags::paused) != lt::torrent_flags_t{};
+        out.has_error = !st.errc.message().empty();
 
-        out_items[count++] = out;
+        out_items[count] = out;
+
+        w->names.push_back(st.name);
+        w->ids.push_back(to_hex_id(h));
+
+        count++;
     }
 
     return count;
 }
 
-const char* st_get_torrent_name(STSessionRef /*session*/, int32_t index) {
-    if (index < 0) return "";
-    if ((size_t)index >= g_name_cache.size()) return "";
-    return g_name_cache[(size_t)index].c_str();
+const char* st_get_torrent_name(STSessionRef session, int32_t index) {
+    if (!session) return "";
+    auto* w = (SessionWrap*)session;
+    if (index < 0 || index >= (int32_t)w->names.size()) return "";
+    return w->names[(size_t)index].c_str();
 }
 
-const char* st_get_torrent_id(STSessionRef /*session*/, int32_t index) {
-    if (index < 0) return "";
-    if ((size_t)index >= g_id_cache.size()) return "";
-    return g_id_cache[(size_t)index].c_str();
+const char* st_get_torrent_id(STSessionRef session, int32_t index) {
+    if (!session) return "";
+    auto* w = (SessionWrap*)session;
+    if (index < 0 || index >= (int32_t)w->ids.size()) return "";
+    return w->ids[(size_t)index].c_str();
 }
+
+bool st_torrent_pause(STSessionRef session, const char* torrent_id_hex) {
+    if (!session || !torrent_id_hex) return false;
+    auto* w = (SessionWrap*)session;
+
+    std::lock_guard<std::mutex> lock(w->mtx);
+    lt::torrent_handle h = find_handle_by_id(w, torrent_id_hex);
+    if (!h.is_valid()) return false;
+
+    h.unset_flags(lt::torrent_flags::auto_managed);
+    h.pause();
+    return true;
+}
+
+bool st_torrent_resume(STSessionRef session, const char* torrent_id_hex) {
+    if (!session || !torrent_id_hex) return false;
+    auto* w = (SessionWrap*)session;
+
+    std::lock_guard<std::mutex> lock(w->mtx);
+    lt::torrent_handle h = find_handle_by_id(w, torrent_id_hex);
+    if (!h.is_valid()) return false;
+
+    h.unset_flags(lt::torrent_flags::auto_managed);
+    h.resume();
+    return true;
+}
+
+bool st_torrent_remove(STSessionRef session, const char* torrent_id_hex, bool delete_files) {
+    if (!session || !torrent_id_hex) return false;
+    auto* w = (SessionWrap*)session;
+
+    std::lock_guard<std::mutex> lock(w->mtx);
+    lt::torrent_handle h = find_handle_by_id(w, torrent_id_hex);
+    if (!h.is_valid()) return false;
+
+    lt::remove_flags_t flags = {};
+    if (delete_files) flags |= lt::session::delete_files;
+
+    w->sess.remove_torrent(h, flags);
+    return true;
+}
+
+} // extern "C"

@@ -14,6 +14,8 @@ struct ContentView: View {
     @State private var showingAddSheet = false
     @State private var errorText: String?
 
+    @State private var confirmRemove = false
+
     var body: some View {
         VStack(spacing: 0) {
             if let errorText {
@@ -27,42 +29,35 @@ struct ContentView: View {
                 List(selection: $selectedTorrentID) {
                     Section {
                         ForEach(grouped.tv) { t in
-                            TorrentListRow(t: t)
-                                .tag(t.id)
+                            TorrentListRow(t: t).tag(t.id)
                         }
                     } header: {
-                        Label("TV", systemImage: "tv")
-                            .foregroundStyle(.secondary)
+                        Label("TV", systemImage: "tv").foregroundStyle(.secondary)
                     }
 
                     Section {
                         ForEach(grouped.movies) { t in
-                            TorrentListRow(t: t)
-                                .tag(t.id)
+                            TorrentListRow(t: t).tag(t.id)
                         }
                     } header: {
-                        Label("Movies", systemImage: "film")
-                            .foregroundStyle(.secondary)
+                        Label("Movies", systemImage: "film").foregroundStyle(.secondary)
                     }
 
                     if !grouped.other.isEmpty {
                         Section {
                             ForEach(grouped.other) { t in
-                                TorrentListRow(t: t)
-                                    .tag(t.id)
+                                TorrentListRow(t: t).tag(t.id)
                             }
                         } header: {
-                            Label("Other", systemImage: "tray")
-                                .foregroundStyle(.secondary)
+                            Label("Other", systemImage: "tray").foregroundStyle(.secondary)
                         }
                     }
                 }
                 .listStyle(.inset)
                 .frame(minWidth: 650)
 
-                if let id = selectedTorrentID,
-                   let torrent = engine.torrents.first(where: { $0.id == id }) {
-                    TorrentInspectorView(torrent: torrent, engine: engine)
+                if let selectedTorrent {
+                    TorrentInspectorView(torrent: selectedTorrent, engine: engine)
                         .frame(minWidth: 320, idealWidth: 360)
                 } else {
                     VStack {
@@ -77,17 +72,55 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Text("swiftTorrent")
-                    .font(.headline)
+                Text("swiftTorrent").font(.headline)
             }
 
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     showingAddSheet = true
                 } label: {
                     Label("Add Torrent", systemImage: "plus")
                 }
+
+                Divider()
+
+                Button {
+                    togglePauseResume()
+                } label: {
+                    Label(pauseResumeLabel, systemImage: pauseResumeSymbol)
+                }
+                .disabled(selectedTorrent == nil)
+
+                Button(role: .destructive) {
+                    confirmRemove = true
+                } label: {
+                    Label("Remove", systemImage: "minus.circle")
+                }
+                .disabled(selectedTorrent == nil)
             }
+        }
+        .confirmationDialog(
+            "Remove torrent?",
+            isPresented: $confirmRemove,
+            titleVisibility: .visible
+        ) {
+            Button("Remove (keep files)", role: .destructive) {
+                if let id = selectedTorrentID {
+                    engine.removeTorrent(id: id, deleteFiles: false)
+                    selectedTorrentID = nil
+                }
+            }
+
+            Button("Remove + Delete files", role: .destructive) {
+                if let id = selectedTorrentID {
+                    engine.removeTorrent(id: id, deleteFiles: true)
+                    selectedTorrentID = nil
+                }
+            }
+
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Choose whether to keep downloaded files or delete them too.")
         }
         .sheet(isPresented: $showingAddSheet) {
             AddTorrentSheetView { magnet, savePath, category in
@@ -96,6 +129,34 @@ struct ContentView: View {
             .presentationDetents([.medium])
         }
         .frame(minWidth: 1050, minHeight: 560)
+    }
+
+    private var selectedTorrent: TorrentRow? {
+        guard let id = selectedTorrentID else { return nil }
+        return engine.torrents.first(where: { $0.id == id })
+    }
+
+    private var pauseResumeSymbol: String {
+        if let t = selectedTorrent, t.isPaused {
+            return "play.fill"
+        }
+        return "pause.fill"
+    }
+
+    private var pauseResumeLabel: String {
+        if let t = selectedTorrent, t.isPaused {
+            return "Resume"
+        }
+        return "Pause"
+    }
+
+    private func togglePauseResume() {
+        guard let t = selectedTorrent else { return }
+        if t.isPaused {
+            engine.resumeTorrent(id: t.id)
+        } else {
+            engine.pauseTorrent(id: t.id)
+        }
     }
 
     // MARK: - Grouping
@@ -136,10 +197,8 @@ private struct TorrentListRow: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            // Status icon
-            StatusIcon(state: t.state, isSeeding: t.isSeeding)
+            StatusIcon(state: t.state, isSeeding: t.isSeeding, isPaused: t.isPaused)
 
-            // Name + progress
             VStack(alignment: .leading, spacing: 6) {
                 Text(t.name)
                     .lineLimit(1)
@@ -160,16 +219,14 @@ private struct TorrentListRow: View {
 
             Spacer()
 
-            // Seeders / Peers (stacked)
             VStack(alignment: .trailing, spacing: 4) {
                 Text("\(t.seeds) \(plural(t.seeds, one: "seeder", many: "seeders"))")
                 Text("\(t.peers) \(plural(t.peers, one: "peer", many: "peers"))")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
-            .frame(width: 90, alignment: .trailing)
+            .frame(width: 110, alignment: .trailing)
 
-            // Down / Up (stacked)
             VStack(alignment: .trailing, spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.down")
@@ -182,7 +239,7 @@ private struct TorrentListRow: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
-            .frame(width: 110, alignment: .trailing)
+            .frame(width: 120, alignment: .trailing)
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
@@ -191,6 +248,9 @@ private struct TorrentListRow: View {
     // MARK: ETA
 
     private func etaString() -> String? {
+        // If paused, don’t show ETA (optional – feels nicer)
+        guard !t.isPaused else { return nil }
+
         // Only show ETA while downloading and we have a rate
         guard t.progress < 0.999 else { return nil }
         guard t.downBps > 0 else { return nil }
@@ -215,8 +275,6 @@ private struct TorrentListRow: View {
         return "\(sec)s"
     }
 
-    // MARK helpers
-
     private func formatBps(_ bps: Int) -> String {
         let kb = Double(bps) / 1024.0
         if kb < 1024 { return String(format: "%.0f KB/s", kb) }
@@ -233,6 +291,7 @@ private struct TorrentListRow: View {
 private struct StatusIcon: View {
     let state: Int
     let isSeeding: Bool
+    let isPaused: Bool
 
     var body: some View {
         let icon = iconName()
@@ -247,7 +306,9 @@ private struct StatusIcon: View {
     }
 
     private func iconName() -> String {
-        // Matches our stateLabel mapping, but shown as icons
+        // Paused should visually override everything else.
+        if isPaused { return "pause.circle.fill" }
+
         switch state {
         case 0: return "clock"                    // queued
         case 1: return "checkmark.shield"         // checking
@@ -263,6 +324,8 @@ private struct StatusIcon: View {
     }
 
     private func labelText() -> String {
+        if isPaused { return "Paused" }
+
         switch state {
         case 0: return "Queued"
         case 1: return "Checking"

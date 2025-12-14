@@ -14,7 +14,6 @@ struct TorrentRow: Identifiable, Equatable {
     let name: String
 
     let progress: Double
-
     let totalWanted: Int64
     let totalWantedDone: Int64
 
@@ -26,6 +25,7 @@ struct TorrentRow: Identifiable, Equatable {
 
     let state: Int
     let isSeeding: Bool
+    let isPaused: Bool
 
     let category: String?
 }
@@ -40,7 +40,6 @@ final class TorrentEngine: ObservableObject {
     init() {
         session = st_session_create(6881, 6891)
 
-        // Restore previously saved torrents
         let saved = TorrentStore.load()
         for item in saved {
             _ = addMagnet(item.magnet, savePath: item.savePath, category: item.category, persist: false)
@@ -71,21 +70,10 @@ final class TorrentEngine: ObservableObject {
 
         if persist {
             var items = TorrentStore.load()
-
             let key = MagnetKeyExtractor.key(from: trimmedMagnet) ?? trimmedMagnet
-            let entry = StoredTorrent(
-                key: key,
-                magnet: trimmedMagnet,
-                savePath: savePath,
-                category: normalizeCategory(category)
-            )
-
-            if let idx = items.firstIndex(where: { $0.key == key }) {
-                items[idx] = entry
-            } else {
-                items.append(entry)
-            }
-
+            let entry = StoredTorrent(key: key, magnet: trimmedMagnet, savePath: savePath, category: normalizeCategory(category))
+            if let idx = items.firstIndex(where: { $0.key == key }) { items[idx] = entry }
+            else { items.append(entry) }
             TorrentStore.save(items)
         }
 
@@ -95,8 +83,27 @@ final class TorrentEngine: ObservableObject {
                 st_add_magnet(s, magnetC, pathC, &errBuf, Int32(errBuf.count))
             }
         }
-
         return ok ? nil : String(cString: errBuf)
+    }
+
+    // MARK: - Controls
+
+    func pauseTorrent(id: String) {
+        guard let s = session else { return }
+        id.withCString { st_torrent_pause(s, $0) }
+        poll()
+    }
+
+    func resumeTorrent(id: String) {
+        guard let s = session else { return }
+        id.withCString { st_torrent_resume(s, $0) }
+        poll()
+    }
+
+    func removeTorrent(id: String, deleteFiles: Bool) {
+        guard let s = session else { return }
+        id.withCString { st_torrent_remove(s, $0, deleteFiles) }
+        poll()
     }
 
     // MARK: - Category
@@ -110,14 +117,12 @@ final class TorrentEngine: ObservableObject {
             poll()
             return
         }
-
         if let idx = items.firstIndex(where: { MagnetKeyExtractor.key(from: $0.magnet) == torrentID }) {
             items[idx].category = normalizeCategory(category)
             TorrentStore.save(items)
             poll()
             return
         }
-
         if let idx = items.firstIndex(where: { $0.magnet.contains(torrentID) }) {
             items[idx].category = normalizeCategory(category)
             TorrentStore.save(items)
@@ -173,6 +178,7 @@ final class TorrentEngine: ObservableObject {
                     seeds: Int(st.num_seeds),
                     state: Int(st.state),
                     isSeeding: st.is_seeding,
+                    isPaused: st.is_paused,
                     category: categoryForTorrent(id: id)
                 )
             )
