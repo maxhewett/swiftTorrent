@@ -6,14 +6,67 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		50F35E032EEE3624007EF828 /* TorrentCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 50F35DFB2EEE3624007EF828 /* TorrentCore.framework */; };
+		50F35E042EEE3624007EF828 /* TorrentCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 50F35DFB2EEE3624007EF828 /* TorrentCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		50F35E0E2EEE37B1007EF828 /* libtorrent-rasterbar.2.0.11.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 50F35E0D2EEE37B1007EF828 /* libtorrent-rasterbar.2.0.11.dylib */; };
+		50F35E122EEE3AFC007EF828 /* libtorrent-rasterbar.2.0.11.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 50F35E0D2EEE37B1007EF828 /* libtorrent-rasterbar.2.0.11.dylib */; };
+		50F35E132EEE3AFD007EF828 /* libtorrent-rasterbar.2.0.11.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 50F35E0D2EEE37B1007EF828 /* libtorrent-rasterbar.2.0.11.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		50F35E012EEE3624007EF828 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 508B99202EEE30B7000B877D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 50F35DFA2EEE3624007EF828;
+			remoteInfo = TorrentCore;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		50F35E052EEE3624007EF828 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				50F35E042EEE3624007EF828 /* TorrentCore.framework in Embed Frameworks */,
+				50F35E132EEE3AFD007EF828 /* libtorrent-rasterbar.2.0.11.dylib in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		508B99282EEE30B7000B877D /* swiftTorrent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = swiftTorrent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		50F35DFB2EEE3624007EF828 /* TorrentCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = TorrentCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		50F35E0D2EEE37B1007EF828 /* libtorrent-rasterbar.2.0.11.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = "libtorrent-rasterbar.2.0.11.dylib"; path = "../../../../opt/homebrew/Cellar/libtorrent-rasterbar/2.0.11_3/lib/libtorrent-rasterbar.2.0.11.dylib"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		50F35E082EEE3624007EF828 /* Exceptions for "TorrentCore" folder in "TorrentCore" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			publicHeaders = (
+				TorrentCore.h,
+			);
+			target = 50F35DFA2EEE3624007EF828 /* TorrentCore */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		508B992A2EEE30B7000B877D /* swiftTorrent */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = swiftTorrent;
+			sourceTree = "<group>";
+		};
+		50F35DFC2EEE3624007EF828 /* TorrentCore */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				50F35E082EEE3624007EF828 /* Exceptions for "TorrentCore" folder in "TorrentCore" target */,
+			);
+			path = TorrentCore;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -23,6 +76,16 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				50F35E032EEE3624007EF828 /* TorrentCore.framework in Frameworks */,
+				50F35E122EEE3AFC007EF828 /* libtorrent-rasterbar.2.0.11.dylib in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		50F35DF82EEE3624007EF828 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				50F35E0E2EEE37B1007EF828 /* libtorrent-rasterbar.2.0.11.dylib in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -33,6 +96,8 @@
 			isa = PBXGroup;
 			children = (
 				508B992A2EEE30B7000B877D /* swiftTorrent */,
+				50F35DFC2EEE3624007EF828 /* TorrentCore */,
+				50F35E0C2EEE37B1007EF828 /* Frameworks */,
 				508B99292EEE30B7000B877D /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,11 +106,30 @@
 			isa = PBXGroup;
 			children = (
 				508B99282EEE30B7000B877D /* swiftTorrent.app */,
+				50F35DFB2EEE3624007EF828 /* TorrentCore.framework */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
+		50F35E0C2EEE37B1007EF828 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				50F35E0D2EEE37B1007EF828 /* libtorrent-rasterbar.2.0.11.dylib */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
+
+/* Begin PBXHeadersBuildPhase section */
+		50F35DF62EEE3624007EF828 /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
 
 /* Begin PBXNativeTarget section */
 		508B99272EEE30B7000B877D /* swiftTorrent */ = {
@@ -55,10 +139,12 @@
 				508B99242EEE30B7000B877D /* Sources */,
 				508B99252EEE30B7000B877D /* Frameworks */,
 				508B99262EEE30B7000B877D /* Resources */,
+				50F35E052EEE3624007EF828 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				50F35E022EEE3624007EF828 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				508B992A2EEE30B7000B877D /* swiftTorrent */,
@@ -69,6 +155,29 @@
 			productName = swiftTorrent;
 			productReference = 508B99282EEE30B7000B877D /* swiftTorrent.app */;
 			productType = "com.apple.product-type.application";
+		};
+		50F35DFA2EEE3624007EF828 /* TorrentCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 50F35E092EEE3624007EF828 /* Build configuration list for PBXNativeTarget "TorrentCore" */;
+			buildPhases = (
+				50F35DF62EEE3624007EF828 /* Headers */,
+				50F35DF72EEE3624007EF828 /* Sources */,
+				50F35DF82EEE3624007EF828 /* Frameworks */,
+				50F35DF92EEE3624007EF828 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				50F35DFC2EEE3624007EF828 /* TorrentCore */,
+			);
+			name = TorrentCore;
+			packageProductDependencies = (
+			);
+			productName = TorrentCore;
+			productReference = 50F35DFB2EEE3624007EF828 /* TorrentCore.framework */;
+			productType = "com.apple.product-type.framework";
 		};
 /* End PBXNativeTarget section */
 
@@ -81,6 +190,9 @@
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					508B99272EEE30B7000B877D = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					50F35DFA2EEE3624007EF828 = {
 						CreatedOnToolsVersion = 26.2;
 					};
 				};
@@ -100,12 +212,20 @@
 			projectRoot = "";
 			targets = (
 				508B99272EEE30B7000B877D /* swiftTorrent */,
+				50F35DFA2EEE3624007EF828 /* TorrentCore */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		508B99262EEE30B7000B877D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		50F35DF92EEE3624007EF828 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +242,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		50F35DF72EEE3624007EF828 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		50F35E022EEE3624007EF828 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 50F35DFA2EEE3624007EF828 /* TorrentCore */;
+			targetProxy = 50F35E012EEE3624007EF828 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		508B99312EEE30B8000B877D /* Debug */ = {
@@ -250,24 +385,35 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = FHXMYC956U;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"/opt/homebrew/Cellar/libtorrent-rasterbar/2.0.11_3/lib",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.swiftTorrent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -282,30 +428,123 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = FHXMYC956U;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"/opt/homebrew/Cellar/libtorrent-rasterbar/2.0.11_3/lib",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.swiftTorrent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		50F35E062EEE3624007EF828 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = FHXMYC956U;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				ENABLE_MODULE_VERIFIER = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"/opt/homebrew/include/libtorrent-rasterbar/**",
+					"/opt/homebrew/include/**",
+				);
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"/opt/homebrew/lib/**",
+					"/opt/homebrew/Cellar/libtorrent-rasterbar/2.0.11_3/lib",
+				);
+				MARKETING_VERSION = 1.0;
+				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
+				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
+				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.TorrentCore;
+				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Debug;
+		};
+		50F35E072EEE3624007EF828 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = FHXMYC956U;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				ENABLE_MODULE_VERIFIER = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"/opt/homebrew/include/libtorrent-rasterbar/**",
+					"/opt/homebrew/include/**",
+				);
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"/opt/homebrew/lib/**",
+					"/opt/homebrew/Cellar/libtorrent-rasterbar/2.0.11_3/lib",
+				);
+				MARKETING_VERSION = 1.0;
+				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
+				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
+				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.TorrentCore;
+				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
 			};
 			name = Release;
 		};
@@ -326,6 +565,15 @@
 			buildConfigurations = (
 				508B99342EEE30B8000B877D /* Debug */,
 				508B99352EEE30B8000B877D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		50F35E092EEE3624007EF828 /* Build configuration list for PBXNativeTarget "TorrentCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				50F35E062EEE3624007EF828 /* Debug */,
+				50F35E072EEE3624007EF828 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
