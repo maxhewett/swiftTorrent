@@ -56,11 +56,18 @@ struct TorrentListRow: View {
     // MARK: - Trakt Display
 
     private var displayName: String {
-        engine.mediaByTorrentID[t.id]?.title ?? t.name
+        if let meta = engine.mediaByTorrentID[t.id] {
+            var base = meta.title
+            if let y = meta.year { base += " (\(y))" }
+            if let suf = meta.displaySuffix, !suf.isEmpty { base += " • \(suf)" }
+            return base
+        }
+        return t.name
     }
 
     private var posterURL: URL? {
-        engine.mediaByTorrentID[t.id]?.posterURL
+        if let cached = PosterCache.load(for: t.id) { return cached }
+        return engine.mediaByTorrentID[t.id]?.posterURL
     }
 
     private var posterView: some View {

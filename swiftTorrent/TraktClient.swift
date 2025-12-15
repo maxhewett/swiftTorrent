@@ -27,51 +27,63 @@ final class TraktClient {
         return req
     }
 
-    // Trakt returns multiple result shapes; we only decode what we need.
-    struct SearchResult: Decodable {
+    // MARK: - Models (decode only what we need)
+
+    struct SearchResult: Decodable, Hashable {
         let type: String
         let movie: Movie?
         let show: Show?
 
-        struct Movie: Decodable {
+        struct Movie: Decodable, Hashable {
             let title: String
-            let posterURL: URL?
             let year: Int?
             let ids: IDs
             let overview: String?
         }
 
-        struct Show: Decodable {
+        struct Show: Decodable, Hashable {
             let title: String
-            let posterURL: URL?
             let year: Int?
             let ids: IDs
             let overview: String?
         }
 
-        struct IDs: Decodable {
+        struct IDs: Decodable, Hashable {
             let trakt: Int?
+            let slug: String?
+            let imdb: String?
             let tmdb: Int?
+            let tvdb: Int?
         }
     }
 
+    // MARK: - API
+
     func searchMovie(query: String, year: Int?) async throws -> SearchResult.Movie? {
         var items = [URLQueryItem(name: "query", value: query)]
-        if let year { items.append(URLQueryItem(name: "years", value: "\(year)")) }
+        if let year { items.append(URLQueryItem(name: "year", value: "\(year)")) } // ✅ year (not years)
+
+        // Optional: ask for more info
+        items.append(URLQueryItem(name: "extended", value: "full"))
 
         let req = makeRequest("/search/movie", queryItems: items)
         let (data, _) = try await URLSession.shared.data(for: req)
         let results = try JSONDecoder().decode([SearchResult].self, from: data)
+
+        // Trakt sorts by relevance, but year now actually filters, so first is usually correct.
         return results.compactMap(\.movie).first
     }
 
     func searchShow(query: String, year: Int?) async throws -> SearchResult.Show? {
         var items = [URLQueryItem(name: "query", value: query)]
-        if let year { items.append(URLQueryItem(name: "years", value: "\(year)")) }
+        if let year { items.append(URLQueryItem(name: "year", value: "\(year)")) } // ✅ year (not years)
+
+        items.append(URLQueryItem(name: "extended", value: "full"))
 
         let req = makeRequest("/search/show", queryItems: items)
         let (data, _) = try await URLSession.shared.data(for: req)
         let results = try JSONDecoder().decode([SearchResult].self, from: data)
+
         return results.compactMap(\.show).first
     }
 }

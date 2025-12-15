@@ -19,10 +19,23 @@ struct TorrentInspectorView: View {
                 .font(.headline)
                 .lineLimit(2)
 
+            // Media block
+            if let meta = engine.mediaByTorrentID[torrent.id] {
+                MediaInfoBlock(meta: meta, torrentID: torrent.id)
+                    .padding(.top, 4)
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Fetching details…")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
+            }
+
             HStack(spacing: 8) {
                 Text(stateLabel(torrent.state))
                     .foregroundStyle(.secondary)
-                Text("• \(torrent.peers)p/\(torrent.seeds)s")
+                Text("• \(torrent.peers) Peers • \(torrent.seeds) Seeders")
                     .foregroundStyle(.secondary)
             }
 
@@ -41,6 +54,14 @@ struct TorrentInspectorView: View {
             Text("Category")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+            
+            Button {
+                engine.cleanupNow(torrentID: torrent.id)
+            } label: {
+                Label("Clean Up Now", systemImage: "folder")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(engine.mediaByTorrentID[torrent.id] == nil)
 
             HStack {
                 TextField("e.g. tv-sonarr / movies-radarr", text: $categoryText)
@@ -61,6 +82,7 @@ struct TorrentInspectorView: View {
             .buttonStyle(.bordered)
 
             Spacer()
+
             GroupBox("Files") {
                 let files = engine.filesByTorrentID[torrent.id] ?? []
 
@@ -76,12 +98,10 @@ struct TorrentInspectorView: View {
                         let showParent = parentPath != "." && parentPath != "/"
 
                         VStack(alignment: .leading, spacing: 6) {
-                            // Title: just the filename
                             Text(filename)
                                 .font(.body)
                                 .lineLimit(1)
 
-                            // Subtext: folder path (grey)
                             if showParent {
                                 Text(parentPath)
                                     .font(.caption)
@@ -113,9 +133,13 @@ struct TorrentInspectorView: View {
             }
             .onAppear {
                 engine.refreshFiles(for: torrent.id)
+                engine.enrichIfNeeded(for: torrent)
             }
             .onChange(of: torrent.id) { _, newID in
                 engine.refreshFiles(for: newID)
+                if let t = engine.torrents.first(where: { $0.id == newID }) {
+                    engine.enrichIfNeeded(for: t)
+                }
             }
         }
         .padding()
@@ -123,7 +147,6 @@ struct TorrentInspectorView: View {
             categoryText = torrent.category ?? ""
         }
         .onChange(of: torrent.category) { _, newValue in
-            // keep UI in sync if category changes from elsewhere
             if (newValue ?? "") != categoryText {
                 categoryText = newValue ?? ""
             }
@@ -135,7 +158,7 @@ struct TorrentInspectorView: View {
         if kb < 1024 { return String(format: "%.0f KB/s", kb) }
         return String(format: "%.1f MB/s", kb / 1024.0)
     }
-    
+
     private func formatBytes(_ v: Int64) -> String {
         let b = Double(v)
         let kb = b / 1024
@@ -158,6 +181,88 @@ struct TorrentInspectorView: View {
         case 6: return "Allocating"
         case 7: return "Checking fast"
         default: return "State \(s)"
+        }
+    }
+}
+
+private struct MediaInfoBlock: View {
+    let meta: MediaMetadata
+    let torrentID: String
+
+    // ✅ Use cached poster if present, otherwise remote URL
+    private var resolvedPosterURL: URL? {
+        PosterCache.load(for: torrentID) ?? meta.posterURL
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            poster
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text(meta.title)
+                        .font(.headline)
+                        .lineLimit(2)
+
+                    if let year = meta.year {
+                        Text("(\(String(year)))")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let suffix = meta.displaySuffix, !suffix.isEmpty {
+                    Text(suffix)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                if let overview = meta.overview, !overview.isEmpty {
+                    Text(overview)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(6)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var poster: some View {
+        Group {
+            if let url = resolvedPosterURL {
+                AsyncImage(url: url, transaction: Transaction(animation: nil)) { phase in
+                    switch phase {
+                    case .empty:
+                        placeholder
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    default:
+                        placeholder
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: 70, height: 105)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(.separator, lineWidth: 0.5)
+        )
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.quaternary)
+            Image(systemName: "photo")
+                .foregroundStyle(.secondary)
         }
     }
 }
