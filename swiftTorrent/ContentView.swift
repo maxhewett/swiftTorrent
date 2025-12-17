@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var engine = TorrentEngine()
+    @EnvironmentObject var engine: TorrentEngine
 
     @State private var selectedTorrentID: String?
     @State private var showingAddSheet = false

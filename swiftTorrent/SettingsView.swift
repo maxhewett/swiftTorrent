@@ -7,10 +7,15 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import Foundation
 
 struct SettingsView: View {
     @StateObject private var settings = AppSettings.shared
     @State private var errorText: String? = nil
+    
+
+    // ✅ ADD THIS
+    @State private var webUIPortText: String = ""
 
     var body: some View {
         Form {
@@ -22,10 +27,50 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Destinations") {
+            Section("Web UI") {
+                LabeledContent("Port") {
+                    TextField("8080", text: $webUIPortText)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing)
+                        .onChange(of: webUIPortText) {
+                            let digitsOnly = webUIPortText.filter { $0.isNumber }
+                            if digitsOnly != webUIPortText { webUIPortText = digitsOnly }
+
+                            guard let v = Int(digitsOnly), (1...65535).contains(v) else { return }
+                            settings.webUIPort = v
+                        }
+                }
+
+                Text("WebUI: http://127.0.0.1:\(settings.webUIPort)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .onAppear {
+                if webUIPortText.isEmpty {
+                    webUIPortText = String(settings.webUIPort)
+                }
+            }
+            .onChange(of: settings.webUIPort) {
+                let s = String(settings.webUIPort)
+                if webUIPortText != s { webUIPortText = s }
+            }
+            
+            Section("RPC (Sonarr/Radarr)") {
+                TextField("Username (optional)", text: $settings.rpcUsername)
+                    .textFieldStyle(.roundedBorder)
+
+                SecureField("Password (optional)", text: $settings.rpcPassword)
+                    .textFieldStyle(.roundedBorder)
+
+                Text("Leave blank to disable authentication.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Section("Download Client") {
                 destinationRow(
-                    title: "Movies folder",
-                    url: settings.moviesURL()
+                    title: "Initial download folder",
+                    url: settings.resolvedDownloadURL
                 ) {
                     FolderPicker.pickFolder { url in
                         guard let url else { return }
@@ -33,12 +78,28 @@ struct SettingsView: View {
                             do {
                                 let access = url.startAccessingSecurityScopedResource()
                                 defer { if access { url.stopAccessingSecurityScopedResource() } }
+                                try settings.setDownloadURL(url)
+                                errorText = nil
+                            } catch {
+                                errorText = error.localizedDescription
+                            }
+                        }
+                    }
+                }
+            }
 
+            Section("Destinations") {
+                destinationRow(
+                    title: "Movies folder",
+                    url: settings.resolvedMoviesURL
+                ) {
+                    FolderPicker.pickFolder { url in
+                        guard let url else { return }
+                        Task { @MainActor in
+                            do {
+                                let access = url.startAccessingSecurityScopedResource()
+                                defer { if access { url.stopAccessingSecurityScopedResource() } }
                                 try settings.setMoviesURL(url)
-
-                                // sanity: force read-back
-                                _ = settings.moviesURL()
-
                                 errorText = nil
                             } catch {
                                 errorText = error.localizedDescription
@@ -49,7 +110,7 @@ struct SettingsView: View {
 
                 destinationRow(
                     title: "TV folder",
-                    url: settings.tvURL()
+                    url: settings.resolvedTVURL
                 ) {
                     FolderPicker.pickFolder { url in
                         guard let url else { return }
@@ -57,12 +118,7 @@ struct SettingsView: View {
                             do {
                                 let access = url.startAccessingSecurityScopedResource()
                                 defer { if access { url.stopAccessingSecurityScopedResource() } }
-
                                 try settings.setTVURL(url)
-
-                                // sanity: force read-back
-                                _ = settings.tvURL()
-
                                 errorText = nil
                             } catch {
                                 errorText = error.localizedDescription
@@ -70,15 +126,6 @@ struct SettingsView: View {
                         }
                     }
                 }
-
-                if let errorText {
-                    Text(errorText).foregroundStyle(.red)
-                }
-
-                // Optional debugging line (remove later)
-                Text("Movies bookmark bytes: \(settings.moviesBookmarkData?.count ?? 0) • TV: \(settings.tvBookmarkData?.count ?? 0)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(16)
