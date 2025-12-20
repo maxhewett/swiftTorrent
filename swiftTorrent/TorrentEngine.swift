@@ -275,14 +275,12 @@ final class TorrentEngine: ObservableObject {
 
         guard ok else { return String(cString: errBuf) }
 
-        // ✅ Auto-start: ensure this stable key is NOT considered paused, then resume.
+        // ✅ Ensure it starts
         desiredPausedKeys.remove(stable)
         savePausedKeys(desiredPausedKeys)
-        stable.withCString { st_torrent_resume(s, $0) }
+        _ = stable.withCString { st_torrent_resume(s, $0) }
 
-        // give the UI a nudge
         poll()
-
         return nil
     }
 
@@ -290,7 +288,7 @@ final class TorrentEngine: ObservableObject {
 
     func pauseTorrent(id: String) {
         guard let s = session else { return }
-        id.withCString { st_torrent_pause(s, $0) }
+        _ = id.withCString { st_torrent_pause(s, $0) }
 
         let stable = stableKey(forLiveTorrentID: id)
         desiredPausedKeys.insert(stable)
@@ -301,7 +299,7 @@ final class TorrentEngine: ObservableObject {
 
     func resumeTorrent(id: String) {
         guard let s = session else { return }
-        id.withCString { st_torrent_resume(s, $0) }
+        _ = id.withCString { st_torrent_resume(s, $0) }
 
         let stable = stableKey(forLiveTorrentID: id)
         desiredPausedKeys.remove(stable)
@@ -312,7 +310,7 @@ final class TorrentEngine: ObservableObject {
 
     func removeTorrent(id: String, deleteFiles: Bool) {
         guard let s = session else { return }
-        id.withCString { st_torrent_remove(s, $0, deleteFiles) }
+        _ = id.withCString { st_torrent_remove(s, $0, deleteFiles) }
 
         let stable = stableKey(forLiveTorrentID: id)
         desiredPausedKeys.remove(stable)
@@ -425,9 +423,9 @@ final class TorrentEngine: ObservableObject {
         for item in saved {
             let key = item.key
             if desiredPausedKeys.contains(key) {
-                key.withCString { st_torrent_pause(s, $0) }
+                _ = key.withCString { st_torrent_pause(s, $0) }
             } else {
-                key.withCString { st_torrent_resume(s, $0) }
+                _ = key.withCString { st_torrent_resume(s, $0) }
             }
         }
 

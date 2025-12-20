@@ -104,11 +104,22 @@ bool st_add_magnet(
         lt::add_torrent_params atp = lt::parse_magnet_uri(magnet_uri);
         atp.save_path = save_path;
 
-        // Don’t let session auto-management override pause/resume decisions
+        // Don't let session auto-management override pause/resume decisions
         atp.flags &= ~lt::torrent_flags::auto_managed;
 
+        // Ensure it isn't created paused
+        atp.flags &= ~lt::torrent_flags::paused;
+
         std::lock_guard<std::mutex> lock(w->mtx);
-        w->sess.async_add_torrent(std::move(atp));
+
+        // ✅ Synchronous add, returns a valid handle immediately
+        lt::torrent_handle h = w->sess.add_torrent(std::move(atp));
+
+        if (h.is_valid()) {
+            h.unset_flags(lt::torrent_flags::auto_managed);
+            h.resume(); // ✅ starts now
+        }
+
         return true;
     } catch (std::exception const& e) {
         if (err_buf && err_buf_len > 0) {
