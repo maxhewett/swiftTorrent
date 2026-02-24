@@ -53,6 +53,12 @@ final class TorrentEngine: ObservableObject {
     private var session: STSessionRef?
     private var timer: Timer?
 
+    // Debounced poll — coalesces rapid back-to-back poll requests into one
+    private var pendingPoll: DispatchWorkItem?
+
+    // Torrents paused by the download queue (distinct from user-paused)
+    private var queuedTorrentKeys: [String] = []
+
     // MARK: - Pause persistence (by STORED torrent key)
     private let pausedKeysDefaultsKey = "swiftTorrent.pausedTorrentKeys"
     private var desiredPausedKeys: Set<String> = []
@@ -275,13 +281,28 @@ final class TorrentEngine: ObservableObject {
 
         guard ok else { return String(cString: errBuf) }
 
-        // ✅ Ensure it starts
-        desiredPausedKeys.remove(stable)
-        savePausedKeys(desiredPausedKeys)
-        _ = stable.withCString { st_torrent_resume(s, $0) }
+        // Check max active downloads — if we're at the limit, queue this one instead
+        let maxActive = AppSettings.shared.maxActiveDownloads
+        let activeCount = torrents.filter { !$0.isPaused && !$0.isSeeding && $0.progress < 0.999 }.count
+        if maxActive > 0 && activeCount >= maxActive {
+            queuedTorrentKeys.append(stable)
+            _ = stable.withCString { st_torrent_pause(s, $0) }
+        } else {
+            desiredPausedKeys.remove(stable)
+            savePausedKeys(desiredPausedKeys)
+            _ = stable.withCString { st_torrent_resume(s, $0) }
+        }
 
-        poll()
+        schedulePoll()
         return nil
+    }
+
+    // Debounces rapid poll() calls (e.g. when many torrents are added at once)
+    private func schedulePoll() {
+        pendingPoll?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.poll() }
+        pendingPoll = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: item)
     }
 
     // MARK: - Controls (persist pause immediately using STABLE key)
@@ -402,6 +423,9 @@ final class TorrentEngine: ObservableObject {
 
         torrents = rows
 
+        // Promote queued torrents when a download slot is free
+        promoteQueuedIfNeeded()
+
         // ✅ Apply desired pause/resume once (slight delay helps libtorrent “settle”)
         if !didApplyDesiredPauseState {
             didApplyDesiredPauseState = true
@@ -431,6 +455,26 @@ final class TorrentEngine: ObservableObject {
 
         // refresh UI state after applying
         poll()
+    }
+
+    private func promoteQueuedIfNeeded() {
+        guard !queuedTorrentKeys.isEmpty, let s = session else { return }
+        let maxActive = AppSettings.shared.maxActiveDownloads
+        guard maxActive > 0 else {
+            // Unlimited — flush the whole queue
+            for key in queuedTorrentKeys {
+                _ = key.withCString { st_torrent_resume(s, $0) }
+            }
+            queuedTorrentKeys.removeAll()
+            return
+        }
+        let activeCount = torrents.filter { !$0.isPaused && !$0.isSeeding && $0.progress < 0.999 }.count
+        var available = maxActive - activeCount
+        while available > 0, !queuedTorrentKeys.isEmpty {
+            let key = queuedTorrentKeys.removeFirst()
+            _ = key.withCString { st_torrent_resume(s, $0) }
+            available -= 1
+        }
     }
 
     // MARK: - Pause persistence internals

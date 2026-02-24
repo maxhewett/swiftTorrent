@@ -21,64 +21,64 @@ final class TransmissionRPC {
     func install(on server: HttpServer) {
         server["/transmission/rpc"] = { [weak self] req in
             guard let self else { return .internalServerError }
+            // Swifter calls handlers on background threads, but all of our state is
+            // @MainActor-isolated. Dispatch synchronously to the main thread so that
+            // every RPC request is serialised and actor isolation is respected.
+            return DispatchQueue.main.sync { self.handleRequest(req) }
+        }
+    }
 
-            // If engine not attached yet, fail cleanly
-            guard self.engine != nil else {
-                return self.serviceUnavailable("Transmission RPC not installed yet (TorrentEngine not attached).")
+    private func handleRequest(_ req: HttpRequest) -> HttpResponse {
+        // If engine not attached yet, fail cleanly
+        guard engine != nil else {
+            return serviceUnavailable("Transmission RPC not installed yet (TorrentEngine not attached).")
+        }
+
+        // 1) BASIC AUTH (first)
+        let settings = AppSettings.shared
+        let requiredUser = settings.rpcUsername
+        let requiredPass = settings.rpcPassword
+
+        if !requiredUser.isEmpty || !requiredPass.isEmpty {
+            guard let creds = basicAuthCredentials(from: req),
+                  creds.user == requiredUser,
+                  creds.pass == requiredPass else {
+                return unauthorized()
             }
+        }
 
-            // 1) BASIC AUTH (first)
-            let settings = AppSettings.shared
-            let requiredUser = settings.rpcUsername
-            let requiredPass = settings.rpcPassword
+        // 2) X-Transmission-Session-Id handshake
+        let clientSessionID = req.headers["x-transmission-session-id"]
+            ?? req.headers["X-Transmission-Session-Id"]
 
-            if !requiredUser.isEmpty || !requiredPass.isEmpty {
-                guard let creds = self.basicAuthCredentials(from: req),
-                      creds.user == requiredUser,
-                      creds.pass == requiredPass else {
-                    return self.unauthorized()
-                }
-            }
+        if clientSessionID != transmissionSessionID {
+            transmissionSessionID = UUID().uuidString
+            return HttpResponse.raw(
+                409,
+                "Conflict",
+                ["X-Transmission-Session-Id": transmissionSessionID],
+                nil
+            )
+        }
 
-            // 2) X-Transmission-Session-Id handshake
-            let clientSessionID = req.headers["x-transmission-session-id"]
-                ?? req.headers["X-Transmission-Session-Id"]
+        // 3) Parse JSON RPC body
+        let bodyBytes = req.body ?? []
+        let bodyData = Data(bodyBytes)
+        guard
+            let obj = try? JSONSerialization.jsonObject(with: bodyData, options: []),
+            let json = obj as? [String: Any],
+            let method = json["method"] as? String
+        else {
+            return .badRequest(.text("Invalid JSON"))
+        }
 
-            if clientSessionID != self.transmissionSessionID {
-                self.transmissionSessionID = UUID().uuidString
-                return HttpResponse.raw(
-                    409,
-                    "Conflict",
-                    ["X-Transmission-Session-Id": self.transmissionSessionID],
-                    nil
-                )
-            }
-
-            // 3) Parse JSON RPC body
-            let bodyBytes = req.body ?? []
-            let bodyData = Data(bodyBytes)
-            guard
-                let obj = try? JSONSerialization.jsonObject(with: bodyData, options: []),
-                let json = obj as? [String: Any],
-                let method = json["method"] as? String
-            else {
-                return .badRequest(.text("Invalid JSON"))
-            }
-
-            switch method {
-            case "session-get":
-                return self.handleSessionGet()
-            case "torrent-get":
-                return self.handleTorrentGet(json)
-            case "torrent-start":
-                return self.handleTorrentStart(json)
-            case "torrent-stop":
-                return self.handleTorrentStop(json)
-            case "torrent-add":
-                return self.handleTorrentAdd(json)
-            default:
-                return self.ok(arguments: [:]) // be permissive for now
-            }
+        switch method {
+        case "session-get":  return handleSessionGet()
+        case "torrent-get":  return handleTorrentGet(json)
+        case "torrent-start": return handleTorrentStart(json)
+        case "torrent-stop":  return handleTorrentStop(json)
+        case "torrent-add":   return handleTorrentAdd(json)
+        default:              return ok(arguments: [:])
         }
     }
 

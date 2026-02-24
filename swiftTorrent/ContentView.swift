@@ -10,10 +10,11 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var engine: TorrentEngine
 
-    @State private var selectedTorrentID: String?
+    @State private var selectedTorrentIDs: Set<String> = []
     @State private var showingAddSheet = false
     @State private var errorText: String?
     @State private var confirmRemove = false
+    @State private var torrentsToRemove: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,22 +26,16 @@ struct ContentView: View {
             }
 
             HSplitView {
-                List(selection: $selectedTorrentID) {
+                List(selection: $selectedTorrentIDs) {
                     Section {
-                        ForEach(grouped.tv) { t in
-                            TorrentListRow(t: t, engine: engine)
-                                .tag(t.id)
-                        }
+                        ForEach(grouped.tv) { t in torrentRow(t) }
                     } header: {
                         Label("TV", systemImage: "tv")
                             .foregroundStyle(.secondary)
                     }
 
                     Section {
-                        ForEach(grouped.movies) { t in
-                            TorrentListRow(t: t, engine: engine)
-                                .tag(t.id)
-                        }
+                        ForEach(grouped.movies) { t in torrentRow(t) }
                     } header: {
                         Label("Movies", systemImage: "film")
                             .foregroundStyle(.secondary)
@@ -48,10 +43,7 @@ struct ContentView: View {
 
                     if !grouped.other.isEmpty {
                         Section {
-                            ForEach(grouped.other) { t in
-                                TorrentListRow(t: t, engine: engine)
-                                    .tag(t.id)
-                            }
+                            ForEach(grouped.other) { t in torrentRow(t) }
                         } header: {
                             Label("Other", systemImage: "tray")
                                 .foregroundStyle(.secondary)
@@ -66,7 +58,9 @@ struct ContentView: View {
                         .frame(minWidth: 320, idealWidth: 360)
                 } else {
                     VStack(spacing: 10) {
-                        Text("Select a torrent")
+                        Text(selectedTorrentIDs.count > 1
+                             ? "\(selectedTorrentIDs.count) torrents selected"
+                             : "Select a torrent")
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
@@ -88,22 +82,23 @@ struct ContentView: View {
                 }
 
                 Button(role: .destructive) {
+                    torrentsToRemove = selectedTorrentIDs
                     confirmRemove = true
                 } label: {
-                    Label("Remove", systemImage: "minus")
+                    Label("Remove", systemImage: "trash")
                 }
-                .disabled(selectedTorrent == nil)
+                .disabled(selectedTorrentIDs.isEmpty)
 
                 Button {
                     togglePauseResume()
                 } label: {
                     Label(pauseResumeLabel, systemImage: pauseResumeSymbol)
                 }
-                .disabled(selectedTorrent == nil)
+                .disabled(selectedTorrentIDs.isEmpty)
             }
         }
         .confirmationDialog(
-            "Remove torrent?",
+            torrentsToRemove.count == 1 ? "Remove torrent?" : "Remove \(torrentsToRemove.count) torrents?",
             isPresented: $confirmRemove,
             titleVisibility: .visible
         ) {
@@ -115,7 +110,7 @@ struct ContentView: View {
                 removeSelected(deleteFiles: true)
             }
 
-            Button("Cancel", role: .cancel) { }
+            Button("Cancel", role: .cancel) { torrentsToRemove = [] }
         } message: {
             Text("Choose whether to keep downloaded files or delete them too.")
         }
@@ -128,36 +123,70 @@ struct ContentView: View {
         .frame(minWidth: 1050, minHeight: 560)
     }
 
+    // MARK: - Row builder
+
+    @ViewBuilder
+    private func torrentRow(_ t: TorrentRow) -> some View {
+        TorrentListRow(t: t, engine: engine)
+            .tag(t.id)
+            .contextMenu {
+                let targets: Set<String> = selectedTorrentIDs.contains(t.id) ? selectedTorrentIDs : [t.id]
+                let targetTorrents = engine.torrents.filter { targets.contains($0.id) }
+                let allPaused = targetTorrents.allSatisfy { $0.isPaused }
+
+                if allPaused {
+                    Button { for id in targets { engine.resumeTorrent(id: id) } } label: {
+                        Label("Resume", systemImage: "play.fill")
+                    }
+                } else {
+                    Button { for id in targets { engine.pauseTorrent(id: id) } } label: {
+                        Label("Pause", systemImage: "pause.fill")
+                    }
+                }
+                Divider()
+                Button("Remove…", role: .destructive) {
+                    torrentsToRemove = targets
+                    confirmRemove = true
+                }
+            }
+    }
+
     // MARK: - Selection
 
     private var selectedTorrent: TorrentRow? {
-        guard let id = selectedTorrentID else { return nil }
+        guard selectedTorrentIDs.count == 1, let id = selectedTorrentIDs.first else { return nil }
         return engine.torrents.first(where: { $0.id == id })
     }
 
+    private var selectedTorrents: [TorrentRow] {
+        engine.torrents.filter { selectedTorrentIDs.contains($0.id) }
+    }
+
     private var pauseResumeSymbol: String {
-        if let t = selectedTorrent, t.isPaused { return "play.fill" }
-        return "pause.fill"
+        selectedTorrents.allSatisfy { $0.isPaused } ? "play.fill" : "pause.fill"
     }
 
     private var pauseResumeLabel: String {
-        if let t = selectedTorrent, t.isPaused { return "Resume" }
-        return "Pause"
+        selectedTorrents.allSatisfy { $0.isPaused } ? "Resume" : "Pause"
     }
 
     private func togglePauseResume() {
-        guard let t = selectedTorrent else { return }
-        if t.isPaused {
-            engine.resumeTorrent(id: t.id)
-        } else {
-            engine.pauseTorrent(id: t.id)
+        let allPaused = selectedTorrents.allSatisfy { $0.isPaused }
+        for t in selectedTorrents {
+            if allPaused {
+                engine.resumeTorrent(id: t.id)
+            } else {
+                engine.pauseTorrent(id: t.id)
+            }
         }
     }
 
     private func removeSelected(deleteFiles: Bool) {
-        guard let id = selectedTorrentID else { return }
-        engine.removeTorrent(id: id, deleteFiles: deleteFiles)
-        selectedTorrentID = nil
+        for id in torrentsToRemove {
+            engine.removeTorrent(id: id, deleteFiles: deleteFiles)
+        }
+        selectedTorrentIDs.subtract(torrentsToRemove)
+        torrentsToRemove = []
     }
 
     // MARK: - Grouping

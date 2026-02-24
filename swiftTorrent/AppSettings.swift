@@ -18,12 +18,11 @@ final class AppSettings: ObservableObject {
         static let moviesBookmark = "swiftTorrent.settings.moviesBookmark"
         static let tvBookmark = "swiftTorrent.settings.tvBookmark"
         static let cleanedKeys = "swiftTorrent.settings.cleanedTorrentKeys"
-
-        // NEW (for Transmission/Radarr/Sonarr friendliness)
         static let downloadBookmark = "swiftTorrent.settings.downloadBookmark"
         static let webUIPort = "swiftTorrent.settings.webUIPort"
         static let rpcUsername = "swiftTorrent.settings.rpcUsername"
         static let rpcPassword = "swiftTorrent.settings.rpcPassword"
+        static let maxActiveDownloads = "swiftTorrent.settings.maxActiveDownloads"
     }
 
     @Published var autoCleanupEnabled: Bool {
@@ -54,6 +53,11 @@ final class AppSettings: ObservableObject {
 
     @Published var rpcPassword: String = "" {
         didSet { UserDefaults.standard.set(rpcPassword, forKey: K.rpcPassword) }
+    }
+
+    /// Maximum number of torrents downloading simultaneously. 0 = unlimited.
+    @Published var maxActiveDownloads: Int = 5 {
+        didSet { UserDefaults.standard.set(maxActiveDownloads, forKey: K.maxActiveDownloads) }
     }
 
     // NEW: a “default download dir” that Radarr can see (not necessarily Movies/TV final dirs)
@@ -96,6 +100,9 @@ final class AppSettings: ObservableObject {
 
         self.rpcUsername = UserDefaults.standard.string(forKey: K.rpcUsername) ?? ""
         self.rpcPassword = UserDefaults.standard.string(forKey: K.rpcPassword) ?? ""
+
+        let storedMax = UserDefaults.standard.integer(forKey: K.maxActiveDownloads)
+        self.maxActiveDownloads = storedMax > 0 ? storedMax : 5
 
         refreshResolvedURLs()
     }
