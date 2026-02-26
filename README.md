@@ -2,6 +2,12 @@
 
 # swiftTorrent
 
+[![Status](https://img.shields.io/badge/status-active-success)](https://github.com/maxhewett/swiftTorrent)
+[![Platform](https://img.shields.io/badge/platform-macOS-blue)](https://www.apple.com/macos/)
+[![Apple%20Silicon](https://img.shields.io/badge/arch-Apple%20Silicon-black)](https://developer.apple.com/documentation/apple-silicon)
+[![Swift](https://img.shields.io/badge/swift-5.0-orange)](https://www.swift.org/)
+[![License: GPL%20v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](/Users/max/Developer/swiftTorrent/LICENSE)
+
 swiftTorrent is a macOS torrent app focused on movie and TV workflows, with a Swift-native UI and metadata-aware torrent presentation.
 
 ![swiftTorrent screenshot](https://github.com/user-attachments/assets/9a2b06fe-6d07-4cb6-a9c2-a6c4c284b0b6)
@@ -46,12 +52,6 @@ swiftTorrent is a macOS torrent app focused on movie and TV workflows, with a Sw
 - [`swiftTorrent/`](/Users/max/Developer/swiftTorrent/swiftTorrent) - SwiftUI app source code.
 - [`TorrentCore/`](/Users/max/Developer/swiftTorrent/TorrentCore) - Native bridge framework for torrent engine integration.
 - [`Frameworks/`](/Users/max/Developer/swiftTorrent/Frameworks) - Bundled third-party native libraries and headers.
-
-## Language Statistics on GitHub
-
-This repository vendors large native dependency trees under `Frameworks/`, which can skew GitHub language stats toward C/C++.
-
-A [`.gitattributes`](/Users/max/Developer/swiftTorrent/.gitattributes) file is included to mark vendored framework files so Linguist better reflects the app's primary language (Swift).
 
 ## License
 
