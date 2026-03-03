@@ -62,8 +62,7 @@ final class TransmissionRPC {
         }
 
         // 3) Parse JSON RPC body
-        let bodyBytes = req.body ?? []
-        let bodyData = Data(bodyBytes)
+        let bodyData = Data(req.body)
         guard
             let obj = try? JSONSerialization.jsonObject(with: bodyData, options: []),
             let json = obj as? [String: Any],
@@ -238,7 +237,7 @@ final class TransmissionRPC {
 
         // 2) .torrent metainfo (base64) — Radarr can do this too
         if let metainfoB64 = args["metainfo"] as? String,
-           let data = Data(base64Encoded: metainfoB64) {
+           Data(base64Encoded: metainfoB64) != nil {
 
             // If you don't yet support adding from .torrent data in TorrentCore,
             // return a clear error so we can implement the missing TorrentCore function next.
@@ -253,4 +252,3 @@ final class TransmissionRPC {
         return .badRequest(.text("torrent-add missing filename/metainfo"))
     }
 }
-

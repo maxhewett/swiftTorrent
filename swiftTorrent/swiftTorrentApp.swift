@@ -12,6 +12,7 @@ import Combine
 struct swiftTorrentApp: App {
     @StateObject private var engine = TorrentEngine()
     @StateObject private var settings = AppSettings.shared
+    @StateObject private var appUpdater = AppUpdater()
 
     init() { }
 
@@ -26,10 +27,20 @@ struct swiftTorrentApp: App {
                 .onChange(of: settings.webUIPort) { _, newPort in
                     LocalWebServer.shared.start(port: newPort)
                 }
+                .environmentObject(appUpdater)
+        }
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") {
+                    appUpdater.checkForUpdates()
+                }
+                .disabled(!appUpdater.canCheckForUpdates)
+            }
         }
 
         Settings {
             SettingsView()
+                .environmentObject(appUpdater)
         }
     }
 }

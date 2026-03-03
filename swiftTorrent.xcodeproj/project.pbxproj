@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		507A10012F00000100000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 507A10032F00000100000001 /* Sparkle */; };
 		508800002EF103C10003BEB5 /* fusion.hpp in Headers */ = {isa = PBXBuildFile; fileRef = 5088B1862EF103C00003BEB5 /* fusion.hpp */; };
 		508800012EF103C10003BEB5 /* prior_impl.hpp in Headers */ = {isa = PBXBuildFile; fileRef = 508894E52EF103C00003BEB5 /* prior_impl.hpp */; };
 		508800022EF103C10003BEB5 /* rlocal_512.hpp in Headers */ = {isa = PBXBuildFile; fileRef = 5088B35C2EF103C00003BEB5 /* rlocal_512.hpp */; };
@@ -32859,6 +32860,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				507A10012F00000100000001 /* Sparkle in Frameworks */,
 				50B5C2A82EF13BAA007F233D /* Swifter in Frameworks */,
 				508883C92EF103550003BEB5 /* libcrypto.3.dylib in Frameworks */,
 				508883CA2EF103550003BEB5 /* libtorrent-rasterbar.2.0.11.dylib in Frameworks */,
@@ -76192,6 +76194,7 @@
 			);
 			name = swiftTorrent;
 			packageProductDependencies = (
+				507A10032F00000100000001 /* Sparkle */,
 				50B5C2A72EF13BAA007F233D /* Swifter */,
 			);
 			productName = swiftTorrent;
@@ -76251,6 +76254,7 @@
 			mainGroup = 508B991F2EEE30B7000B877D;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				507A10022F00000100000001 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				50B5C2A62EF13BAA007F233D /* XCRemoteSwiftPackageReference "swifter" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -76285,6 +76289,7 @@
 /* Begin PBXShellScriptBuildPhase section */
 		508808CC2EF1058A0003BEB5 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -76302,6 +76307,7 @@
 		};
 		508808CE2EF10C160003BEB5 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -76319,6 +76325,7 @@
 		};
 		508883B42EF0F8C50003BEB5 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -76510,7 +76517,7 @@
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 007;
 				DEVELOPMENT_TEAM = FHXMYC956U;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -76536,7 +76543,7 @@
 					"$(PROJECT_DIR)/Frameworks/Headers",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.0.7;
+				MARKETING_VERSION = 0.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.swiftTorrent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -76547,6 +76554,9 @@
 				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
 				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUEnableAutomaticChecks = YES;
+				SUFeedURL = "https://maxhewett.github.io/swiftTorrent/appcast.xml";
+				SUPublicEDKey = "rxaJsfCpTKtpqRubSfkJwKnztT5S8RHsdAueuT+jKck=";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -76565,7 +76575,7 @@
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 007;
 				DEVELOPMENT_TEAM = FHXMYC956U;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -76591,7 +76601,7 @@
 					"$(PROJECT_DIR)/Frameworks/Headers",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.0.7;
+				MARKETING_VERSION = 0.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.swiftTorrent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -76602,6 +76612,9 @@
 				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
 				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUEnableAutomaticChecks = YES;
+				SUFeedURL = "https://maxhewett.github.io/swiftTorrent/appcast.xml";
+				SUPublicEDKey = "rxaJsfCpTKtpqRubSfkJwKnztT5S8RHsdAueuT+jKck=";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -76731,6 +76744,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		507A10022F00000100000001 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.6.4;
+			};
+		};
 		50B5C2A62EF13BAA007F233D /* XCRemoteSwiftPackageReference "swifter" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/httpswift/swifter";
@@ -76742,6 +76763,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		507A10032F00000100000001 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 507A10022F00000100000001 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
 		50B5C2A72EF13BAA007F233D /* Swifter */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 50B5C2A62EF13BAA007F233D /* XCRemoteSwiftPackageReference "swifter" */;

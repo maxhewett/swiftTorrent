@@ -28,6 +28,7 @@ struct SettingsView: View {
 
 private struct GeneralSettingsTab: View {
     @ObservedObject private var settings = AppSettings.shared
+    @EnvironmentObject private var appUpdater: AppUpdater
     @State private var confirmResetCleanup = false
 
     var body: some View {
@@ -54,6 +55,26 @@ private struct GeneralSettingsTab: View {
                 .padding(.vertical, 2)
             } header: {
                 Text("Maintenance")
+            }
+
+            Section {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Software updates")
+                        Text(appUpdater.isConfigured
+                             ? "Checks GitHub-hosted Sparkle updates."
+                             : "Set SUFeedURL and SUPublicEDKey to enable Sparkle updates.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Check Now") { appUpdater.checkForUpdates() }
+                        .buttonStyle(.bordered)
+                        .disabled(!appUpdater.canCheckForUpdates)
+                }
+                .padding(.vertical, 2)
+            } header: {
+                Text("Updates")
             }
         }
         .formStyle(.grouped)
