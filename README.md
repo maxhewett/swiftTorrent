@@ -10,8 +10,6 @@
 
 swiftTorrent is a macOS torrent app focused on movie and TV workflows, with a Swift-native UI and metadata-aware torrent presentation.
 
-![swiftTorrent screenshot](https://github.com/user-attachments/assets/9a2b06fe-6d07-4cb6-a9c2-a6c4c284b0b6)
-
 ## Features
 
 - SwiftUI-first macOS interface with custom animations and media-centric UX.
@@ -19,6 +17,14 @@ swiftTorrent is a macOS torrent app focused on movie and TV workflows, with a Sw
 - Category-based post-download file handling (move/copy behavior).
 - Torrent name cleanup and normalization for better readability.
 - Poster/title enrichment via Trakt/tvdb-style metadata sources.
+
+## Screenshots
+
+### Main App
+<img width="80% " height="auto" alt="stnewscreenshot" src="https://github.com/user-attachments/assets/1ecd78da-b74b-4767-a33f-d2389cee7004" />
+
+### WebUI
+<img width="80%" height="auto" alt="stwebui" src="https://github.com/user-attachments/assets/3fb104c6-d3f6-40bb-9add-13641fb136dd" />
 
 ## Tech Stack
 
