@@ -157,6 +157,11 @@ final class TorrentEngine: ObservableObject {
         return (entry.overrideQuery, entry.overrideYear, type)
     }
 
+    private func arrHint(forLiveTorrentID id: String) -> ArrMetadataHint? {
+        let stable = stableKey(forLiveTorrentID: id)
+        return ArrMetadataStore.find(key: stable) ?? ArrMetadataStore.find(key: id)
+    }
+
     func currentMetadataOverride(for torrentID: String) -> (query: String?, year: Int?, type: MediaMetadata.MediaType?) {
         overrideHint(forLiveTorrentID: torrentID)
     }
@@ -204,17 +209,24 @@ final class TorrentEngine: ObservableObject {
         metadataLookupStateByID[torrent.id] = .loading
 
         let parsed = TorrentNameParser.parse(torrent.name)
+        let arrHint = arrHint(forLiveTorrentID: torrent.id)
         let defaultTypeHint = inferredTypeHint(category: torrent.category, parsed: parsed)
         let override = overrideHint(forLiveTorrentID: torrent.id)
         let query = override.query?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             ? override.query!.trimmingCharacters(in: .whitespacesAndNewlines)
-            : parsed.query
-        let year = override.year ?? parsed.year
-        let typeHint = override.type ?? defaultTypeHint
+            : (arrHint?.title ?? parsed.query)
+        let year = override.year ?? arrHint?.year ?? parsed.year
+        let typeHint = override.type ?? arrHint?.mediaType ?? defaultTypeHint
 
         Task {
             do {
-                var meta = try await resolvedMetadata(query: query, year: year, preferredType: typeHint, displaySuffix: parsed.suffix)
+                var meta = try await resolvedMetadata(
+                    query: query,
+                    year: year,
+                    preferredType: typeHint,
+                    displaySuffix: parsed.suffix,
+                    arrHint: arrHint
+                )
                 guard var metaUnwrapped = meta else {
                     await MainActor.run {
                         self.metadataLookupStateByID[torrent.id] = .failed
@@ -430,7 +442,11 @@ final class TorrentEngine: ObservableObject {
         return parsed.inferredType ?? .movie
     }
 
-    private func resolvedMetadata(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, displaySuffix: String?) async throws -> MediaMetadata? {
+    private func resolvedMetadata(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, displaySuffix: String?, arrHint: ArrMetadataHint? = nil) async throws -> MediaMetadata? {
+        if let arrHint, let arrResolved = try await resolvedArrMetadata(arrHint, displaySuffix: displaySuffix) {
+            return arrResolved
+        }
+
         let candidates = try await resolvedMetadataCandidates(query: query, year: year, preferredType: preferredType)
         guard let best = candidates.first else { return nil }
         return MediaMetadata(
@@ -443,6 +459,44 @@ final class TorrentEngine: ObservableObject {
             tvdbID: best.tvdbID,
             overview: best.overview,
             posterURL: best.posterURL,
+            localPosterPath: nil,
+            displaySuffix: displaySuffix
+        )
+    }
+
+    private func resolvedArrMetadata(_ hint: ArrMetadataHint, displaySuffix: String?) async throws -> MediaMetadata? {
+        guard let type = hint.mediaType else { return nil }
+
+        var title = hint.title
+        var year = hint.year
+        var traktID: Int?
+        var tmdbID = hint.tmdbID
+        var imdbID = hint.imdbID
+        var tvdbID = hint.tvdbID
+        var overview: String?
+        var posterURL: URL?
+
+        if let fallback = try await resolvedMetadataCandidates(query: hint.title, year: hint.year, preferredType: type).first {
+            traktID = fallback.traktID
+            if tmdbID == nil { tmdbID = fallback.tmdbID }
+            if imdbID == nil { imdbID = fallback.imdbID }
+            if tvdbID == nil { tvdbID = fallback.tvdbID }
+            if overview == nil { overview = fallback.overview }
+            if posterURL == nil { posterURL = fallback.posterURL }
+            if title.isEmpty { title = fallback.title }
+            if year == nil { year = fallback.year }
+        }
+
+        return MediaMetadata(
+            type: type,
+            title: title,
+            year: year,
+            traktID: traktID,
+            tmdbID: tmdbID,
+            imdbID: imdbID,
+            tvdbID: tvdbID,
+            overview: overview,
+            posterURL: posterURL,
             localPosterPath: nil,
             displaySuffix: displaySuffix
         )
@@ -616,6 +670,7 @@ final class TorrentEngine: ObservableObject {
         _ = id.withCString { st_torrent_remove(s, $0, deleteFiles) }
 
         TorrentStore.remove(key: stable)
+        ArrMetadataStore.remove(key: stable)
         AppSettings.shared.unmarkCleaned(stable)
         AppSettings.shared.unhideTorrent(stable)
         desiredPausedKeys.remove(stable)

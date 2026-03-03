@@ -90,6 +90,11 @@ final class LocalWebServer {
             return DispatchQueue.main.sync { self.handleAppIcon() }
         }
 
+        server["/api/arr/grab"] = { [weak self] req in
+            guard let self else { return .internalServerError }
+            return DispatchQueue.main.sync { self.handleArrGrab(req) }
+        }
+
         rpc.install(on: server)
     }
 
@@ -268,6 +273,89 @@ final class LocalWebServer {
         return .ok(.data(pngData, contentType: "image/png"))
     }
 
+    private func handleArrGrab(_ req: HttpRequest) -> HttpResponse {
+        let fields = requestFields(req)
+
+        guard let rawDownloadID = firstValue(in: fields, keys: [
+            "downloadId",
+            "download_id",
+            "downloadid",
+            "radarr_download_id",
+            "sonarr_download_id"
+        ])?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawDownloadID.isEmpty else {
+            return .badRequest(.text("Missing downloadId"))
+        }
+
+        let key = ArrMetadataStore.normalizedKey(rawDownloadID)
+        let source = arrSource(from: fields)
+        let type = arrType(from: fields, source: source)
+        let title = firstValue(in: fields, keys: [
+            "title",
+            "seriesTitle",
+            "movieTitle",
+            "radarr_movie_title",
+            "sonarr_series_title"
+        ])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        guard !title.isEmpty else {
+            return .badRequest(.text("Missing title"))
+        }
+
+        let hint = ArrMetadataHint(
+            key: key,
+            source: source,
+            type: type,
+            title: title,
+            year: firstIntValue(in: fields, keys: [
+                "year",
+                "movieYear",
+                "seriesYear",
+                "radarr_movie_year",
+                "sonarr_series_year"
+            ]),
+            imdbID: firstValue(in: fields, keys: [
+                "imdbId",
+                "imdb_id",
+                "radarr_movie_imdbid",
+                "sonarr_series_imdbid"
+            ]),
+            tmdbID: firstIntValue(in: fields, keys: [
+                "tmdbId",
+                "tmdb_id",
+                "radarr_movie_tmdbid",
+                "sonarr_series_tmdbid"
+            ]),
+            tvdbID: firstIntValue(in: fields, keys: [
+                "tvdbId",
+                "tvdb_id",
+                "sonarr_series_tvdbid"
+            ]),
+            updatedAt: Date()
+        )
+
+        ArrMetadataStore.upsert(hint)
+
+        if let engine {
+            let matchingIDs = engine.torrents
+                .map(\.id)
+                .filter { stableKey(forLiveTorrentID: $0) == key || ArrMetadataStore.normalizedKey($0) == key }
+            for liveID in matchingIDs {
+                if let torrent = engine.torrents.first(where: { $0.id == liveID }) {
+                    engine.refreshMetadata(for: torrent)
+                }
+            }
+        }
+
+        return ok([
+            "success": true,
+            "key": key,
+            "title": title,
+            "type": type,
+            "source": hint.source.rawValue
+        ])
+    }
+
     private func torrentSummary(torrent: TorrentRow, metadata: MediaMetadata?) -> [String: Any] {
         let category = AppSettings.shared.normalizedCategoryValue(torrent.category)
         return [
@@ -313,12 +401,94 @@ final class LocalWebServer {
         return json
     }
 
+    private func parseFormBody(_ bytes: [UInt8]) -> [String: String] {
+        guard !bytes.isEmpty,
+              let text = String(bytes: bytes, encoding: .utf8),
+              let components = URLComponents(string: "http://localhost?\(text)") else {
+            return [:]
+        }
+
+        var result: [String: String] = [:]
+        for item in components.queryItems ?? [] {
+            result[item.name] = item.value
+        }
+        return result
+    }
+
+    private func requestFields(_ req: HttpRequest) -> [String: String] {
+        var fields = Dictionary(uniqueKeysWithValues: req.queryParams.map { ($0.0, $0.1) })
+
+        if let json = parseJSONBody(req.body) {
+            for (key, value) in json {
+                if let string = value as? String {
+                    fields[key] = string
+                } else if let number = value as? NSNumber {
+                    fields[key] = number.stringValue
+                }
+            }
+        }
+
+        for (key, value) in parseFormBody(req.body) {
+            fields[key] = value
+        }
+
+        return fields
+    }
+
+    private func firstValue(in fields: [String: String], keys: [String]) -> String? {
+        for key in keys {
+            if let value = fields[key], !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func firstIntValue(in fields: [String: String], keys: [String]) -> Int? {
+        for key in keys {
+            if let value = fields[key], let intValue = Int(value) {
+                return intValue
+            }
+        }
+        return nil
+    }
+
+    private func arrSource(from fields: [String: String]) -> ArrMetadataHint.Source {
+        if fields.keys.contains(where: { $0.hasPrefix("radarr_") }) || firstValue(in: fields, keys: ["source"])?.lowercased() == "radarr" {
+            return .radarr
+        }
+        if fields.keys.contains(where: { $0.hasPrefix("sonarr_") }) || firstValue(in: fields, keys: ["source"])?.lowercased() == "sonarr" {
+            return .sonarr
+        }
+        return .unknown
+    }
+
+    private func arrType(from fields: [String: String], source: ArrMetadataHint.Source) -> String {
+        if let explicit = firstValue(in: fields, keys: ["type", "mediaType", "media_type"])?.lowercased() {
+            if explicit.contains("show") || explicit.contains("series") || explicit == "tv" { return "show" }
+            if explicit.contains("movie") { return "movie" }
+        }
+
+        switch source {
+        case .radarr:
+            return "movie"
+        case .sonarr:
+            return "show"
+        case .unknown:
+            return "movie"
+        }
+    }
+
     private func queryValue(named name: String, in request: HttpRequest) -> String? {
         request.queryParams.first(where: { $0.0 == name })?.1
     }
 
     private func stableKey(for torrent: TorrentRow) -> String {
-        MagnetKeyExtractor.key(from: torrent.id) ?? torrent.id
+        stableKey(forLiveTorrentID: torrent.id)
+    }
+
+    private func stableKey(forLiveTorrentID id: String) -> String {
+        MagnetKeyExtractor.key(from: id) ?? id
     }
 
     private func mediaTypeValue(_ type: MediaMetadata.MediaType?) -> String? {
