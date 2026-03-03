@@ -331,11 +331,18 @@ final class TorrentEngine: ObservableObject {
 
     func removeTorrent(id: String, deleteFiles: Bool) {
         guard let s = session else { return }
+        let stable = stableKey(forLiveTorrentID: id)
         _ = id.withCString { st_torrent_remove(s, $0, deleteFiles) }
 
-        let stable = stableKey(forLiveTorrentID: id)
+        TorrentStore.remove(key: stable)
+        AppSettings.shared.unmarkCleaned(stable)
+        AppSettings.shared.unhideTorrent(stable)
         desiredPausedKeys.remove(stable)
+        queuedTorrentKeys.removeAll { $0 == stable }
         savePausedKeys(desiredPausedKeys)
+        filesByTorrentID[id] = nil
+        mediaByTorrentID[id] = nil
+        lastProgressByID[id] = nil
 
         poll()
     }
@@ -576,7 +583,10 @@ final class TorrentEngine: ObservableObject {
 
                     let ok = await self.runCleanupUsingSettings(liveTorrentID: t.id)
                     if ok {
-                        await MainActor.run { settings.markCleaned(stable) }
+                        await MainActor.run {
+                            settings.markCleaned(stable)
+                            settings.hideTorrent(stable)
+                        }
                     }
                 }
 
@@ -587,7 +597,10 @@ final class TorrentEngine: ObservableObject {
                 guard let self else { return }
                 let ok = await self.runCleanupUsingSettings(liveTorrentID: t.id)
                 if ok {
-                    await MainActor.run { settings.markCleaned(stable) }
+                    await MainActor.run {
+                        settings.markCleaned(stable)
+                        settings.hideTorrent(stable)
+                    }
                 }
             }
         }

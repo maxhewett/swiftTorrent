@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var engine: TorrentEngine
+    @ObservedObject private var settings = AppSettings.shared
 
     @State private var selectedTorrentIDs: Set<String> = []
     @State private var showingAddSheet = false
@@ -155,11 +156,11 @@ struct ContentView: View {
 
     private var selectedTorrent: TorrentRow? {
         guard selectedTorrentIDs.count == 1, let id = selectedTorrentIDs.first else { return nil }
-        return engine.torrents.first(where: { $0.id == id })
+        return visibleTorrents.first(where: { $0.id == id })
     }
 
     private var selectedTorrents: [TorrentRow] {
-        engine.torrents.filter { selectedTorrentIDs.contains($0.id) }
+        visibleTorrents.filter { selectedTorrentIDs.contains($0.id) }
     }
 
     private var pauseResumeSymbol: String {
@@ -197,6 +198,9 @@ struct ContentView: View {
         var other: [TorrentRow] = []
 
         for t in engine.torrents {
+            let stable = stableKey(for: t)
+            if settings.hiddenTorrentKeys.contains(stable) { continue }
+
             let c = normalizeCategory(t.category)
 
             if c == "tv" || c == "sonarr" || c.contains("tv") {
@@ -213,6 +217,14 @@ struct ContentView: View {
             movies.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending },
             other.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         )
+    }
+
+    private var visibleTorrents: [TorrentRow] {
+        engine.torrents.filter { !settings.hiddenTorrentKeys.contains(stableKey(for: $0)) }
+    }
+
+    private func stableKey(for torrent: TorrentRow) -> String {
+        MagnetKeyExtractor.key(from: torrent.id) ?? torrent.id
     }
 
     private func normalizeCategory(_ s: String?) -> String {

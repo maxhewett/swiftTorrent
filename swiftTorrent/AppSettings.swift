@@ -18,6 +18,7 @@ final class AppSettings: ObservableObject {
         static let moviesBookmark = "swiftTorrent.settings.moviesBookmark"
         static let tvBookmark = "swiftTorrent.settings.tvBookmark"
         static let cleanedKeys = "swiftTorrent.settings.cleanedTorrentKeys"
+        static let hiddenKeys = "swiftTorrent.settings.hiddenTorrentKeys"
         static let downloadBookmark = "swiftTorrent.settings.downloadBookmark"
         static let webUIPort = "swiftTorrent.settings.webUIPort"
         static let rpcUsername = "swiftTorrent.settings.rpcUsername"
@@ -72,6 +73,10 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(Array(cleanedTorrentKeys), forKey: K.cleanedKeys) }
     }
 
+    @Published private(set) var hiddenTorrentKeys: Set<String> {
+        didSet { UserDefaults.standard.set(Array(hiddenTorrentKeys), forKey: K.hiddenKeys) }
+    }
+
     // ✅ Cached resolved URLs so SettingsView doesn’t resolve bookmarks during layout
     @Published private(set) var resolvedMoviesURL: URL?
     @Published private(set) var resolvedTVURL: URL?
@@ -87,6 +92,8 @@ final class AppSettings: ObservableObject {
 
         let arr = UserDefaults.standard.stringArray(forKey: K.cleanedKeys) ?? []
         self.cleanedTorrentKeys = Set(arr)
+        let hiddenArr = UserDefaults.standard.stringArray(forKey: K.hiddenKeys) ?? []
+        self.hiddenTorrentKeys = Set(hiddenArr)
 
         self.resolvedMoviesURL = nil
         self.resolvedTVURL = nil
@@ -109,7 +116,12 @@ final class AppSettings: ObservableObject {
 
     func markCleaned(_ key: String) { cleanedTorrentKeys.insert(key) }
     func unmarkCleaned(_ key: String) { cleanedTorrentKeys.remove(key) }
-    func resetCleaned() { cleanedTorrentKeys = [] }
+    func hideTorrent(_ key: String) { hiddenTorrentKeys.insert(key) }
+    func unhideTorrent(_ key: String) { hiddenTorrentKeys.remove(key) }
+    func resetCleaned() {
+        cleanedTorrentKeys = []
+        hiddenTorrentKeys = []
+    }
 
     // MARK: Bookmark setters
 

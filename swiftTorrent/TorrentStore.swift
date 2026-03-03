@@ -94,6 +94,16 @@ enum TorrentStore {
         }
     }
 
+    static func remove(key: String) {
+        var items = load()
+        items.removeAll { item in
+            item.key == key ||
+            MagnetKeyExtractor.key(from: item.magnet) == key ||
+            item.magnet.contains(key)
+        }
+        save(items)
+    }
+
     static func storeURL() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = appSupport.appendingPathComponent("swiftTorrent", isDirectory: true)

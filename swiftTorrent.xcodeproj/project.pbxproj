@@ -76357,7 +76357,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\n\nAPP=\"${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}\"\nEXE=\"${APP}/Contents/MacOS/${EXECUTABLE_NAME}\"\nFW_DIR=\"${APP}/Contents/Frameworks\"\n\n# Paths inside the built app\nCORE=\"${FW_DIR}/TorrentCore.framework/Versions/A/TorrentCore\"\n\n# Adjust if your bundled libtorrent file name differs\nLT=\"${FW_DIR}/libtorrent-rasterbar.2.0.11.dylib\"\n\npatch_bin() {\n  local BIN=\"$1\"\n  [ -f \"$BIN\" ] || return 0\n\n  install_name_tool \\\n    -change /opt/homebrew/opt/libtorrent-rasterbar/lib/libtorrent-rasterbar.2.0.dylib \\\n            @rpath/libtorrent-rasterbar.2.0.11.dylib \\\n    -change /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib \\\n            @rpath/libcrypto.3.dylib \\\n    -change /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib \\\n            @rpath/libssl.3.dylib \\\n    -change /opt/homebrew/opt/boost/lib/libboost_filesystem.dylib \\\n            @rpath/libboost_filesystem.dylib \\\n    -change /opt/homebrew/opt/boost/lib/libboost_atomic.dylib \\\n            @rpath/libboost_atomic.dylib \\\n    \"$BIN\" || true\n}\n\npatch_bin \"$EXE\"\npatch_bin \"$CORE\"\npatch_bin \"$LT\"\n\n# Re-sign the app after patching\nSIGN_ID=\"${EXPANDED_CODE_SIGN_IDENTITY:-\"-\"}\"\ncodesign --force --deep --options runtime --sign \"$SIGN_ID\" \"$APP\"\n";
+			shellScript = "set -euo pipefail\n\n# Keep local Debug builds debugger-friendly.\nif [[ \"${CONFIGURATION}\" != \"Release\" ]]; then\n  exit 0\nfi\n\nAPP=\"${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}\"\nEXE=\"${APP}/Contents/MacOS/${EXECUTABLE_NAME}\"\nFW_DIR=\"${APP}/Contents/Frameworks\"\n\n# Paths inside the built app\nCORE=\"${FW_DIR}/TorrentCore.framework/Versions/A/TorrentCore\"\n\n# Adjust if your bundled libtorrent file name differs\nLT=\"${FW_DIR}/libtorrent-rasterbar.2.0.11.dylib\"\n\npatch_bin() {\n  local BIN=\"$1\"\n  [ -f \"$BIN\" ] || return 0\n\n  install_name_tool \\\n    -change /opt/homebrew/opt/libtorrent-rasterbar/lib/libtorrent-rasterbar.2.0.dylib \\\n            @rpath/libtorrent-rasterbar.2.0.11.dylib \\\n    -change /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib \\\n            @rpath/libcrypto.3.dylib \\\n    -change /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib \\\n            @rpath/libssl.3.dylib \\\n    -change /opt/homebrew/opt/boost/lib/libboost_filesystem.dylib \\\n            @rpath/libboost_filesystem.dylib \\\n    -change /opt/homebrew/opt/boost/lib/libboost_atomic.dylib \\\n            @rpath/libboost_atomic.dylib \\\n    \"$BIN\" || true\n}\n\npatch_bin \"$EXE\"\npatch_bin \"$CORE\"\npatch_bin \"$LT\"\n\n# Re-sign the app after patching\nSIGN_ID=\"${EXPANDED_CODE_SIGN_IDENTITY:-\"-\"}\"\ncodesign --force --deep --options runtime --sign \"$SIGN_ID\" \"$APP\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -76517,10 +76517,10 @@
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 008;
+				CURRENT_PROJECT_VERSION = 009;
 				DEVELOPMENT_TEAM = FHXMYC956U;
 				ENABLE_APP_SANDBOX = NO;
-				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -76543,7 +76543,7 @@
 					"$(PROJECT_DIR)/Frameworks/Headers",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.0.8;
+				MARKETING_VERSION = 0.0.9;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.swiftTorrent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -76575,7 +76575,7 @@
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 008;
+				CURRENT_PROJECT_VERSION = 009;
 				DEVELOPMENT_TEAM = FHXMYC956U;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -76601,7 +76601,7 @@
 					"$(PROJECT_DIR)/Frameworks/Headers",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.0.8;
+				MARKETING_VERSION = 0.0.9;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.swiftTorrent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
