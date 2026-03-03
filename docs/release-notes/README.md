@@ -1,3 +1,3 @@
-# Release Notes
+Place HTML release notes here, for example `0.0.8.html`.
 
-Place optional Sparkle release notes HTML files here as `docs/release-notes/<version>.html`.
+These files are published to GitHub Pages and can be referenced from Sparkle appcast entries.
