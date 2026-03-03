@@ -2,3 +2,4 @@ swiftTorrent.xcodeproj/project.xcworkspace/xcuserdata/max.xcuserdatad/UserInterf
 .DS_Store
 .claude
 release-artifacts/
+.shiphook
