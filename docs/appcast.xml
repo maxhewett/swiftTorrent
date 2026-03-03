@@ -2,7 +2,14 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>swiftTorrent</title>
-        <link>https://maxhewett.github.io/swiftTorrent/</link>
-        <description>swiftTorrent updates</description>
+        <item>
+            <title>0.0.8</title>
+            <pubDate>Tue, 03 Mar 2026 22:10:42 +1300</pubDate>
+            <sparkle:version>008</sparkle:version>
+            <sparkle:shortVersionString>0.0.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/maxhewett/swiftTorrent/releases/download/v0.0.8/swiftTorrent-0.0.8.zip" length="12726576" type="application/octet-stream" sparkle:edSignature="jyBpSpvaMtIAH28YyamW78vqWXKU4fQoYmKt/Tnv8RR9X4tjjmuatBHm5HiuDN7OCtqZwHmgYYKpTPDvnBYjCw=="/>
+        </item>
     </channel>
 </rss>
