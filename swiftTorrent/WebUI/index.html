@@ -1,10 +1,1064 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>swiftTorrent</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>swiftTorrent WebUI</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg-a: #07131f;
+        --bg-b: #10243a;
+        --bg-c: #091018;
+        --panel: rgba(255, 255, 255, 0.08);
+        --panel-strong: rgba(255, 255, 255, 0.12);
+        --stroke: rgba(255, 255, 255, 0.1);
+        --muted: rgba(226, 234, 244, 0.72);
+        --faint: rgba(226, 234, 244, 0.45);
+        --text: #edf4fb;
+        --accent: #84d8ff;
+        --accent-strong: #5ec2ff;
+        --danger: #ff7b7b;
+        --good: #82e39d;
+        --shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+        --radius-xl: 28px;
+        --radius-lg: 22px;
+        --radius-md: 18px;
+        --radius-sm: 14px;
+      }
+
+      @media (prefers-color-scheme: light) {
+        :root {
+          color-scheme: light;
+          --bg-a: #eef6ff;
+          --bg-b: #d8e7f7;
+          --bg-c: #f9fcff;
+          --panel: rgba(255, 255, 255, 0.62);
+          --panel-strong: rgba(255, 255, 255, 0.78);
+          --stroke: rgba(69, 90, 120, 0.16);
+          --muted: rgba(26, 43, 63, 0.72);
+          --faint: rgba(26, 43, 63, 0.48);
+          --text: #0d1d2d;
+          --accent: #2088d8;
+          --accent-strong: #0b6fbf;
+          --danger: #bc4f4f;
+          --good: #2f8f57;
+          --shadow: 0 24px 60px rgba(61, 93, 132, 0.18);
+        }
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: ui-rounded, "SF Pro Rounded", "SF Pro Text", system-ui, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(132, 216, 255, 0.18), transparent 32%),
+          radial-gradient(circle at top right, rgba(116, 132, 255, 0.14), transparent 26%),
+          linear-gradient(145deg, var(--bg-a), var(--bg-b) 45%, var(--bg-c));
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.07), transparent 28%),
+          linear-gradient(315deg, rgba(255, 255, 255, 0.04), transparent 24%);
+        mix-blend-mode: screen;
+        opacity: 0.5;
+      }
+
+      .app-shell {
+        display: grid;
+        grid-template-columns: minmax(420px, 1.2fr) minmax(440px, 0.9fr);
+        gap: 18px;
+        min-height: 100vh;
+        padding: 18px;
+      }
+
+      .glass {
+        background: linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0.06));
+        border: 1px solid var(--stroke);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(26px) saturate(150%);
+        -webkit-backdrop-filter: blur(26px) saturate(150%);
+      }
+
+      .sidebar, .detail {
+        min-height: calc(100vh - 36px);
+        overflow: hidden;
+      }
+
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .sidebar-header,
+      .detail-header {
+        padding: 22px 22px 18px;
+      }
+
+      .app-title {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .app-title-mark {
+        width: 42px;
+        height: 42px;
+        border-radius: 15px;
+        display: grid;
+        place-items: center;
+        background: rgba(255,255,255,0.12);
+        border: 1px solid rgba(255,255,255,0.09);
+        overflow: hidden;
+      }
+
+      .app-title-mark img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      h1, h2, h3, p { margin: 0; }
+
+      .muted { color: var(--muted); }
+      .faint { color: var(--faint); }
+
+      .sidebar-scroll,
+      .detail-scroll {
+        min-height: 0;
+        overflow: auto;
+        padding: 0 14px 16px;
+      }
+
+      .sidebar-scroll {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .section-card {
+        padding: 12px;
+        border-radius: var(--radius-lg);
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.06);
+      }
+
+      .section-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 8px 10px 12px;
+        font-size: 13px;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .section-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .torrent-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .torrent-row {
+        display: grid;
+        grid-template-columns: 54px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        width: 100%;
+        padding: 10px;
+        border: 1px solid transparent;
+        border-radius: 18px;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+      }
+
+      .torrent-row:hover {
+        background: rgba(255,255,255,0.05);
+        border-color: rgba(255,255,255,0.06);
+        transform: translateY(-1px);
+      }
+
+      .torrent-row.is-selected {
+        background: linear-gradient(180deg, rgba(132,216,255,0.18), rgba(255,255,255,0.06));
+        border-color: rgba(132,216,255,0.28);
+      }
+
+      .torrent-poster,
+      .detail-poster {
+        border-radius: 16px;
+        overflow: hidden;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.07);
+        display: grid;
+        place-items: center;
+      }
+
+      .torrent-poster {
+        width: 54px;
+        height: 78px;
+      }
+
+      .torrent-poster img,
+      .detail-poster img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .poster-fallback {
+        font-size: 22px;
+        color: var(--faint);
+      }
+
+      .row-main {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .row-title {
+        font-weight: 650;
+        line-height: 1.25;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .row-subtitle,
+      .row-meta {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .row-meta {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .row-progress {
+        width: 100%;
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        overflow: hidden;
+      }
+
+      .row-progress > span {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+      }
+
+      .row-state {
+        text-align: right;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 8px;
+        min-width: 84px;
+      }
+
+      .state-pill,
+      .category-pill {
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        border: 1px solid rgba(255,255,255,0.1);
+        background: rgba(255,255,255,0.06);
+        color: var(--muted);
+      }
+
+      .state-pill.is-paused { color: #ffd993; }
+      .state-pill.is-seeding { color: var(--good); }
+
+      .empty-section,
+      .empty-detail,
+      .loading-detail {
+        display: grid;
+        place-items: center;
+        min-height: 240px;
+        padding: 32px;
+        text-align: center;
+        color: var(--muted);
+      }
+
+      .detail {
+        display: flex;
+        flex-direction: column;
+        position: relative;
+      }
+
+      .detail-header {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: linear-gradient(180deg, rgba(10,18,30,0.9), rgba(10,18,30,0.45), transparent);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }
+
+      @media (prefers-color-scheme: light) {
+        .detail-header {
+          background: linear-gradient(180deg, rgba(241, 248, 255, 0.92), rgba(241, 248, 255, 0.58), transparent);
+        }
+
+        .toolbar-button,
+        .ghost-button,
+        .danger-button,
+        .select-field,
+        .state-pill,
+        .category-pill,
+        .section-card,
+        .info-block,
+        .stat-box,
+        .file-row,
+        .app-title-mark,
+        .torrent-poster,
+        .detail-poster,
+        .torrent-row:hover {
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.28);
+        }
+
+        .torrent-row.is-selected {
+          background: linear-gradient(180deg, rgba(32,136,216,0.16), rgba(255,255,255,0.52));
+          border-color: rgba(32,136,216,0.22);
+        }
+      }
+
+      .detail-header-grid {
+        display: grid;
+        grid-template-columns: 150px minmax(0, 1fr) auto;
+        gap: 20px;
+        align-items: start;
+      }
+
+      .detail-poster {
+        width: 150px;
+        aspect-ratio: 2 / 3;
+      }
+
+      .detail-title {
+        font-size: clamp(24px, 3vw, 34px);
+        line-height: 1.08;
+        letter-spacing: -0.03em;
+        margin-bottom: 8px;
+      }
+
+      .detail-torrent-name {
+        font-size: 14px;
+        color: var(--muted);
+        margin-bottom: 10px;
+      }
+
+      .detail-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .detail-overview {
+        max-width: 70ch;
+        font-size: 15px;
+        line-height: 1.5;
+        color: var(--muted);
+      }
+
+      .detail-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-width: 160px;
+      }
+
+      .toolbar-button,
+      .ghost-button,
+      .danger-button,
+      .select-field {
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 16px;
+        padding: 11px 14px;
+        font: inherit;
+        color: inherit;
+        background: rgba(255,255,255,0.08);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+      }
+
+      .toolbar-button,
+      .ghost-button,
+      .danger-button {
+        cursor: pointer;
+      }
+
+      .toolbar-button {
+        background: linear-gradient(180deg, rgba(132,216,255,0.2), rgba(255,255,255,0.08));
+      }
+
+      .danger-button {
+        color: #ffd0d0;
+        border-color: rgba(255,123,123,0.22);
+      }
+
+      .detail-scroll {
+        padding: 0 22px 22px;
+      }
+
+      .detail-sections {
+        display: grid;
+        gap: 16px;
+        padding-top: 8px;
+      }
+
+      .info-block {
+        padding: 18px;
+        border-radius: var(--radius-lg);
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.08);
+      }
+
+      .info-block h3 {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        margin-bottom: 14px;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .stat-box {
+        padding: 14px;
+        border-radius: 18px;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.06);
+      }
+
+      .stat-label {
+        font-size: 12px;
+        color: var(--faint);
+        margin-bottom: 6px;
+        text-transform: uppercase;
+      }
+
+      .stat-value {
+        font-size: 18px;
+        font-weight: 650;
+      }
+
+      .progress-large {
+        width: 100%;
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        overflow: hidden;
+        margin: 14px 0 8px;
+      }
+
+      .progress-large > span {
+        display: block;
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent), #c3f1ff);
+        border-radius: inherit;
+      }
+
+      .files-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .file-row {
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.06);
+      }
+
+      .file-row-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 6px;
+      }
+
+      .file-path {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .header-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .refresh-note {
+        font-size: 12px;
+        color: var(--faint);
+      }
+
+      @media (max-width: 1080px) {
+        .app-shell {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar, .detail {
+          min-height: auto;
+        }
+
+        .detail-header {
+          position: static;
+          background: transparent;
+        }
+
+        .detail-header-grid {
+          grid-template-columns: 108px 1fr;
+        }
+
+        .detail-actions {
+          grid-column: 1 / -1;
+          flex-direction: row;
+          flex-wrap: wrap;
+        }
+
+        .stats-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
   </head>
   <body>
-    <h1>swiftTorrent WebUI ✅</h1>
+    <main class="app-shell">
+      <aside class="sidebar glass">
+        <div class="sidebar-header">
+          <div class="header-line">
+            <div class="app-title">
+              <div class="app-title-mark"><img src="/api/app-icon" alt="swiftTorrent icon"></div>
+              <div>
+                <h1>swiftTorrent</h1>
+                <p class="muted">Local web UI</p>
+              </div>
+            </div>
+            <div class="refresh-note" id="refresh-note">Waiting for data…</div>
+          </div>
+        </div>
+        <div class="sidebar-scroll" id="sidebar-content"></div>
+      </aside>
+
+      <section class="detail glass" id="detail-pane">
+        <div class="empty-detail">
+          <div>
+            <div style="font-size: 30px; margin-bottom: 10px;">⌁</div>
+            <h2>Select a torrent</h2>
+            <p class="muted" style="margin-top: 8px;">Choose a torrent from the list to inspect progress, files, category, and metadata.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const state = {
+        snapshot: null,
+        selectedTorrentID: null,
+        detailCache: new Map(),
+        stateTimer: null,
+        detailTimer: null,
+        renderedSidebarKey: null,
+        renderedDetailKey: null,
+      };
+
+      function versionedQuery(extra = {}) {
+        return new URLSearchParams({
+          v: state.snapshot?.webRevision || "bootstrap",
+          ...extra,
+        }).toString();
+      }
+
+      const categorySymbols = {
+        tv: "📺",
+        movie: "🎬",
+        other: "🧩",
+      };
+
+      const sfSymbolMap = {
+        tv: "📺",
+        film: "🎬",
+        movieclapper: "🎬",
+        gamecontroller: "🎮",
+        folder: "🗂️",
+        shippingbox: "📦",
+        books: "📚",
+        "music.note": "🎵",
+        photo: "🖼️",
+        doc: "📄",
+        "tray.full": "🧺",
+        internaldrive: "💾",
+      };
+
+      function formatBytes(bytes) {
+        const value = Number(bytes || 0);
+        if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
+        if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+        if (value >= 1024) return `${Math.round(value / 1024)} KB`;
+        return `${value} B`;
+      }
+
+      function formatRate(bytesPerSecond) {
+        const value = Number(bytesPerSecond || 0);
+        if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB/s`;
+        return `${Math.round(value / 1024)} KB/s`;
+      }
+
+      function posterMarkup(url, alt = "") {
+        return url
+          ? `<img src="${escapeAttr(url)}" alt="${escapeAttr(alt)}" loading="lazy">`
+          : `<div class="poster-fallback">◌</div>`;
+      }
+
+      function escapeHTML(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function escapeAttr(value) {
+        return escapeHTML(value).replaceAll("`", "&#96;");
+      }
+
+      function resolveCategorySymbol(symbol, fallback = categorySymbols.other) {
+        if (!symbol) return fallback;
+        if (sfSymbolMap[symbol]) return sfSymbolMap[symbol];
+        if (/^[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u.test(symbol)) return symbol;
+        return fallback;
+      }
+
+      function categoryDefinitions() {
+        return (state.snapshot?.categories ?? []).reduce((acc, item) => {
+          acc[item.id] = item;
+          return acc;
+        }, {});
+      }
+
+      function groupTorrents(torrents) {
+        const grouped = { tv: [], movie: [], other: [] };
+        for (const torrent of torrents) {
+          if (torrent.category === "tv") grouped.tv.push(torrent);
+          else if (torrent.category === "movie") grouped.movie.push(torrent);
+          else grouped.other.push(torrent);
+        }
+        return grouped;
+      }
+
+      function renderSidebar() {
+        const root = document.getElementById("sidebar-content");
+        const torrents = state.snapshot?.torrents ?? [];
+
+        if (!torrents.length) {
+          state.renderedSidebarKey = null;
+          state.renderedDetailKey = null;
+          root.innerHTML = `
+            <div class="empty-section section-card">
+              <div>
+                <div style="font-size:32px;margin-bottom:10px;">⊕</div>
+                <h2>No torrents</h2>
+                <p class="muted" style="margin-top:8px; max-width: 28ch;">The web UI mirrors the current torrent list. Add torrents from the app or your automation flow and they will appear here.</p>
+              </div>
+            </div>
+          `;
+          return;
+        }
+
+        const defs = categoryDefinitions();
+        const grouped = groupTorrents(torrents);
+        const sections = [
+          { title: defs.tv?.title || "TV", symbol: resolveCategorySymbol(defs.tv?.symbol, categorySymbols.tv), torrents: grouped.tv },
+          { title: defs.movie?.title || "Movies", symbol: resolveCategorySymbol(defs.movie?.symbol, categorySymbols.movie), torrents: grouped.movie },
+          { title: "Other", symbol: categorySymbols.other, torrents: grouped.other },
+        ];
+        const sidebarKey = JSON.stringify(sections.map((section) => ({
+          title: section.title,
+          symbol: section.symbol,
+          torrents: section.torrents.map((torrent) => ({
+            id: torrent.id,
+            selected: torrent.id === state.selectedTorrentID,
+            title: torrent.metadata?.title || null,
+            year: torrent.metadata?.year || null,
+            posterURL: torrent.metadata?.posterURL || null,
+          })),
+        })));
+        if (sidebarKey === state.renderedSidebarKey) {
+          return;
+        }
+        state.renderedSidebarKey = sidebarKey;
+
+        root.innerHTML = sections
+          .map((section) => renderSection(section.title, section.symbol, section.torrents))
+          .filter(Boolean)
+          .join("");
+
+        root.querySelectorAll("[data-select-torrent]").forEach((button) => {
+          button.addEventListener("click", () => {
+            selectTorrent(button.dataset.selectTorrent);
+          });
+        });
+
+        updateSidebarMetrics(torrents);
+      }
+
+      function renderSection(title, symbol, torrents) {
+        if (!torrents.length) return "";
+        return `
+          <section class="section-card">
+            <div class="section-label">
+              <div class="section-title"><span>${escapeHTML(symbol)}</span><span>${escapeHTML(title)}</span></div>
+              <span>${torrents.length}</span>
+            </div>
+            <div class="torrent-list">
+              ${torrents.map(renderTorrentRow).join("")}
+            </div>
+          </section>
+        `;
+      }
+
+      function renderTorrentRow(torrent) {
+        const meta = torrent.metadata || {};
+        const isSelected = torrent.id === state.selectedTorrentID;
+        const progress = Math.round((torrent.progress || 0) * 100);
+        const subtitle = meta.title ? `${meta.title}${meta.year ? ` (${meta.year})` : ""}` : torrent.name;
+        const stateClass = torrent.isPaused ? "is-paused" : (torrent.isSeeding ? "is-seeding" : "");
+        return `
+          <button class="torrent-row ${isSelected ? "is-selected" : ""}" data-select-torrent="${escapeAttr(torrent.id)}">
+            <div class="torrent-poster">${posterMarkup(meta.posterURL, meta.title || torrent.name)}</div>
+            <div class="row-main">
+              <div class="row-title">${escapeHTML(meta.title || torrent.name)}</div>
+              <div class="row-subtitle">${escapeHTML(subtitle)}</div>
+              <div class="row-progress"><span data-row-progress="${escapeAttr(torrent.id)}" style="width:${progress}%"></span></div>
+              <div class="row-meta">
+                <span data-row-state="${escapeAttr(torrent.id)}">${escapeHTML(torrent.stateLabel)}</span>
+                <span data-row-down="${escapeAttr(torrent.id)}">↓ ${escapeHTML(formatRate(torrent.downBps))}</span>
+                <span data-row-up="${escapeAttr(torrent.id)}">↑ ${escapeHTML(formatRate(torrent.upBps))}</span>
+              </div>
+            </div>
+            <div class="row-state">
+              <div class="state-pill ${stateClass}" data-row-pill="${escapeAttr(torrent.id)}">${progress}%</div>
+              <div class="faint" data-row-peers="${escapeAttr(torrent.id)}">${torrent.peers} peers</div>
+            </div>
+          </button>
+        `;
+      }
+
+      function updateSidebarMetrics(torrents) {
+        for (const torrent of torrents) {
+          const progress = Math.round((torrent.progress || 0) * 100);
+          const progressNode = document.querySelector(`[data-row-progress="${CSS.escape(torrent.id)}"]`);
+          const stateNode = document.querySelector(`[data-row-state="${CSS.escape(torrent.id)}"]`);
+          const downNode = document.querySelector(`[data-row-down="${CSS.escape(torrent.id)}"]`);
+          const upNode = document.querySelector(`[data-row-up="${CSS.escape(torrent.id)}"]`);
+          const peersNode = document.querySelector(`[data-row-peers="${CSS.escape(torrent.id)}"]`);
+          const pillNode = document.querySelector(`[data-row-pill="${CSS.escape(torrent.id)}"]`);
+
+          if (progressNode) progressNode.style.width = `${progress}%`;
+          if (stateNode) stateNode.textContent = torrent.stateLabel;
+          if (downNode) downNode.textContent = `↓ ${formatRate(torrent.downBps)}`;
+          if (upNode) upNode.textContent = `↑ ${formatRate(torrent.upBps)}`;
+          if (peersNode) peersNode.textContent = `${torrent.peers} peers`;
+          if (pillNode) {
+            pillNode.textContent = `${progress}%`;
+            pillNode.classList.toggle("is-paused", Boolean(torrent.isPaused));
+            pillNode.classList.toggle("is-seeding", Boolean(torrent.isSeeding));
+          }
+        }
+      }
+
+      async function fetchState() {
+        const response = await fetch("/api/state", { cache: "no-store" });
+        if (!response.ok) throw new Error(`State request failed: ${response.status}`);
+        const payload = await response.json();
+        state.snapshot = payload;
+
+        const torrents = payload.torrents || [];
+        if (!torrents.length) {
+          state.selectedTorrentID = null;
+        } else if (!state.selectedTorrentID || !torrents.some((item) => item.id === state.selectedTorrentID)) {
+          state.selectedTorrentID = torrents[0].id;
+        }
+
+        document.getElementById("refresh-note").textContent = `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+        renderSidebar();
+        await refreshDetail();
+      }
+
+      async function refreshDetail() {
+        const pane = document.getElementById("detail-pane");
+        if (!state.selectedTorrentID) {
+          state.renderedDetailKey = null;
+          pane.innerHTML = `
+            <div class="empty-detail">
+              <div>
+                <div style="font-size: 30px; margin-bottom: 10px;">⌁</div>
+                <h2>Select a torrent</h2>
+                <p class="muted" style="margin-top: 8px;">Choose a torrent from the list to inspect progress, files, category, and metadata.</p>
+              </div>
+            </div>
+          `;
+          return;
+        }
+
+        try {
+          const response = await fetch(`/api/torrent?${versionedQuery({ id: state.selectedTorrentID })}`, { cache: "no-store" });
+          if (!response.ok) throw new Error(`Detail request failed: ${response.status}`);
+          const payload = await response.json();
+          state.detailCache.set(state.selectedTorrentID, payload);
+          renderDetail(payload);
+        } catch (error) {
+          state.renderedDetailKey = null;
+          pane.innerHTML = `
+            <div class="empty-detail">
+              <div>
+                <div style="font-size: 30px; margin-bottom: 10px;">⚠︎</div>
+                <h2>Could not load torrent</h2>
+                <p class="muted" style="margin-top: 8px;">${escapeHTML(error.message)}</p>
+              </div>
+            </div>
+          `;
+        }
+      }
+
+      function renderDetail(detail) {
+        const pane = document.getElementById("detail-pane");
+        const torrent = detail.torrent;
+        const metadata = detail.metadata || null;
+        const files = detail.files || [];
+        const categories = state.snapshot?.categories || [];
+        const progress = Math.round((torrent.progress || 0) * 100);
+        const title = metadata?.title || torrent.name;
+        const year = metadata?.year ? ` (${metadata.year})` : "";
+        const overview = metadata?.overview || "Metadata is still being resolved for this torrent.";
+        const suffix = metadata?.displaySuffix ? `<div class="category-pill">${escapeHTML(metadata.displaySuffix)}</div>` : "";
+        const detailKey = JSON.stringify({
+          torrent: {
+            id: torrent.id,
+            stateLabel: torrent.stateLabel,
+            category: torrent.category,
+            categoryTitle: torrent.categoryTitle,
+            name: torrent.name,
+          },
+          metadata: metadata ? {
+            title: metadata.title,
+            year: metadata.year,
+            type: metadata.type,
+            overview: metadata.overview,
+            displaySuffix: metadata.displaySuffix,
+            posterURL: metadata.posterURL,
+          } : null,
+          files: files.map((file) => ({
+            id: file.id,
+            size: file.size,
+            path: file.path,
+          })),
+          lookupState: detail.metadataLookupState,
+        });
+        if (detailKey === state.renderedDetailKey) {
+          updateDetailMetrics(detail);
+          return;
+        }
+        state.renderedDetailKey = detailKey;
+
+        const categorySelect = `
+          <select class="select-field" id="category-select">
+            <option value="">No category</option>
+            ${categories.map((category) => `<option value="${escapeAttr(category.id)}" ${torrent.category === category.id ? "selected" : ""}>${escapeHTML(category.title)}</option>`).join("")}
+          </select>
+        `;
+
+        pane.innerHTML = `
+          <div class="detail-header">
+            <div class="detail-header-grid">
+              <div class="detail-poster">${posterMarkup(metadata?.posterURL, title)}</div>
+              <div>
+                <h2 class="detail-title">${escapeHTML(title)}${escapeHTML(year)}</h2>
+                <div class="detail-torrent-name">${escapeHTML(torrent.name)}</div>
+                <div class="detail-meta">
+                  <div class="state-pill ${torrent.isPaused ? "is-paused" : torrent.isSeeding ? "is-seeding" : ""}" id="detail-state-pill">${escapeHTML(torrent.stateLabel)}</div>
+                  ${torrent.categoryTitle ? `<div class="category-pill">${escapeHTML(torrent.categoryTitle)}</div>` : ""}
+                  ${metadata?.type ? `<div class="category-pill">${escapeHTML(metadata.type === "movie" ? "Movie" : "Show")}</div>` : ""}
+                  ${suffix}
+                </div>
+                <p class="detail-overview">${escapeHTML(overview)}</p>
+              </div>
+              <div class="detail-actions">
+                <button class="toolbar-button" id="pause-resume-btn">${torrent.isPaused ? "Resume" : "Pause"}</button>
+                <button class="ghost-button" id="cleanup-btn">Clean Up Now</button>
+                <button class="danger-button" id="remove-btn">Remove</button>
+                ${categorySelect}
+              </div>
+            </div>
+          </div>
+          <div class="detail-scroll">
+            <div class="detail-sections">
+              <section class="info-block">
+                <h3>Transfer</h3>
+                <div class="stats-grid">
+                  <div class="stat-box"><div class="stat-label">Progress</div><div class="stat-value" id="detail-progress-value">${progress}%</div></div>
+                  <div class="stat-box"><div class="stat-label">Download</div><div class="stat-value" id="detail-download-value">${escapeHTML(formatRate(torrent.downBps))}</div></div>
+                  <div class="stat-box"><div class="stat-label">Upload</div><div class="stat-value" id="detail-upload-value">${escapeHTML(formatRate(torrent.upBps))}</div></div>
+                  <div class="stat-box"><div class="stat-label">Peers / Seeds</div><div class="stat-value" id="detail-peer-seed-value">${torrent.peers} / ${torrent.seeds}</div></div>
+                </div>
+                <div class="progress-large"><span id="detail-progress-bar" style="width:${progress}%"></span></div>
+                <div class="faint" id="detail-lookup-state">${escapeHTML(detail.metadataLookupState === "loading" ? "Fetching metadata…" : detail.metadataLookupState === "failed" ? "No metadata match found." : "Metadata loaded.")}</div>
+              </section>
+
+              <section class="info-block">
+                <h3>Files</h3>
+                ${files.length ? `<div class="files-list">${files.map(renderFileRow).join("")}</div>` : `<div class="faint">No file list available yet.</div>`}
+              </section>
+            </div>
+          </div>
+        `;
+
+        document.getElementById("pause-resume-btn").addEventListener("click", () => runAction(torrent.id, torrent.isPaused ? "resume" : "pause"));
+        document.getElementById("cleanup-btn").addEventListener("click", () => runAction(torrent.id, "cleanup"));
+        document.getElementById("remove-btn").addEventListener("click", async () => {
+          const removeFiles = window.confirm("Delete downloaded files as well?\n\nPress OK to remove and delete files, or Cancel to remove but keep files.");
+          await runAction(torrent.id, "remove", { deleteFiles: removeFiles });
+        });
+        document.getElementById("category-select").addEventListener("change", async (event) => {
+          await runAction(torrent.id, "setCategory", { category: event.target.value || null });
+        });
+
+        updateDetailMetrics(detail);
+      }
+
+      function updateDetailMetrics(detail) {
+        const torrent = detail.torrent;
+        if (!torrent) return;
+
+        const progress = Math.round((torrent.progress || 0) * 100);
+        const statePill = document.getElementById("detail-state-pill");
+        const progressValue = document.getElementById("detail-progress-value");
+        const downloadValue = document.getElementById("detail-download-value");
+        const uploadValue = document.getElementById("detail-upload-value");
+        const peerSeedValue = document.getElementById("detail-peer-seed-value");
+        const progressBar = document.getElementById("detail-progress-bar");
+        const lookupState = document.getElementById("detail-lookup-state");
+        const pauseResumeButton = document.getElementById("pause-resume-btn");
+
+        if (statePill) {
+          statePill.textContent = torrent.stateLabel;
+          statePill.classList.toggle("is-paused", Boolean(torrent.isPaused));
+          statePill.classList.toggle("is-seeding", Boolean(torrent.isSeeding));
+        }
+        if (progressValue) progressValue.textContent = `${progress}%`;
+        if (downloadValue) downloadValue.textContent = formatRate(torrent.downBps);
+        if (uploadValue) uploadValue.textContent = formatRate(torrent.upBps);
+        if (peerSeedValue) peerSeedValue.textContent = `${torrent.peers} / ${torrent.seeds}`;
+        if (progressBar) progressBar.style.width = `${progress}%`;
+        if (lookupState) {
+          lookupState.textContent =
+            detail.metadataLookupState === "loading"
+              ? "Fetching metadata…"
+              : detail.metadataLookupState === "failed"
+                ? "No metadata match found."
+                : "Metadata loaded.";
+        }
+        if (pauseResumeButton) pauseResumeButton.textContent = torrent.isPaused ? "Resume" : "Pause";
+      }
+
+      function renderFileRow(file) {
+        const progress = Math.round((file.progress || 0) * 100);
+        return `
+          <div class="file-row">
+            <div class="file-row-top">
+              <strong>${escapeHTML(file.path.split("/").pop())}</strong>
+              <span class="faint">${progress}%</span>
+            </div>
+            <div class="file-path">${escapeHTML(file.path)}</div>
+            <div class="row-progress" style="margin-top:10px;"><span style="width:${progress}%"></span></div>
+            <div class="row-meta" style="margin-top:8px;"><span>${escapeHTML(formatBytes(file.done))}</span><span>of</span><span>${escapeHTML(formatBytes(file.size))}</span></div>
+          </div>
+        `;
+      }
+
+      async function runAction(id, action, extra = {}) {
+        const response = await fetch(`/api/torrent/action?${versionedQuery({ id })}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, ...extra }),
+        });
+        if (!response.ok) {
+          const message = await response.text();
+          window.alert(message || `Action failed: ${response.status}`);
+          return;
+        }
+        await fetchState();
+      }
+
+      async function selectTorrent(id) {
+        state.selectedTorrentID = id;
+        state.renderedDetailKey = null;
+        renderSidebar();
+        await refreshDetail();
+      }
+
+      async function boot() {
+        try {
+          await fetchState();
+        } catch (error) {
+          document.getElementById("sidebar-content").innerHTML = `
+            <div class="empty-section section-card">
+              <div>
+                <div style="font-size:32px;margin-bottom:10px;">⚠︎</div>
+                <h2>Web UI unavailable</h2>
+                <p class="muted" style="margin-top:8px; max-width: 30ch;">${escapeHTML(error.message)}</p>
+              </div>
+            </div>
+          `;
+        }
+
+        state.stateTimer = setInterval(fetchState, 3000);
+        state.detailTimer = setInterval(refreshDetail, 2000);
+      }
+
+      boot();
+    </script>
   </body>
 </html>

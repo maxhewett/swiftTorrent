@@ -28,4 +28,9 @@ enum PosterCache {
         try data.write(to: url, options: [.atomic])
         return url
     }
+
+    static func remove(for torrentID: String) {
+        let url = posterPath(for: torrentID)
+        try? FileManager.default.removeItem(at: url)
+    }
 }

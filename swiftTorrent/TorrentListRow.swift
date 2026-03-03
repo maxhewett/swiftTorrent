@@ -62,10 +62,14 @@ struct TorrentListRow: View {
             if let suf = meta.displaySuffix, !suf.isEmpty { base += " • \(suf)" }
             return base
         }
+        if engine.metadataLookupStateByID[t.id] == .failed {
+            return t.name
+        }
         return t.name
     }
 
     private var posterURL: URL? {
+        if let local = engine.mediaByTorrentID[t.id]?.localPosterPath { return local }
         if let cached = PosterCache.load(for: t.id) { return cached }
         return engine.mediaByTorrentID[t.id]?.posterURL
     }
@@ -76,7 +80,7 @@ struct TorrentListRow: View {
                 AsyncImage(url: url, transaction: Transaction(animation: nil)) { phase in
                     switch phase {
                     case .empty:
-                        posterPlaceholder
+                        loadingPosterPlaceholder
                     case .success(let image):
                         image
                             .resizable()
@@ -87,6 +91,7 @@ struct TorrentListRow: View {
                         posterPlaceholder
                     }
                 }
+                .id("row-poster-\(t.id)-\(url.absoluteString)")
             } else {
                 posterPlaceholder
             }
@@ -105,6 +110,15 @@ struct TorrentListRow: View {
                 .fill(.quaternary)
             Image(systemName: "photo")
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var loadingPosterPlaceholder: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(.quaternary)
+            ProgressView()
+                .controlSize(.small)
         }
     }
 

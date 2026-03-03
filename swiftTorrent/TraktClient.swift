@@ -27,6 +27,17 @@ final class TraktClient {
         return req
     }
 
+    private func makePathRequest(_ path: String, queryItems: [URLQueryItem] = []) -> URLRequest {
+        var comps = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        comps.queryItems = queryItems.isEmpty ? nil : queryItems
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(clientID, forHTTPHeaderField: "trakt-api-key")
+        req.setValue("2", forHTTPHeaderField: "trakt-api-version")
+        return req
+    }
+
     // MARK: - Models (decode only what we need)
 
     struct SearchResult: Decodable, Hashable {
@@ -60,30 +71,48 @@ final class TraktClient {
     // MARK: - API
 
     func searchMovie(query: String, year: Int?) async throws -> SearchResult.Movie? {
-        var items = [URLQueryItem(name: "query", value: query)]
-        if let year { items.append(URLQueryItem(name: "year", value: "\(year)")) } // ✅ year (not years)
+        try await searchMovies(query: query, year: year).first
+    }
 
-        // Optional: ask for more info
+    func searchMovies(query: String, year: Int?) async throws -> [SearchResult.Movie] {
+        var items = [URLQueryItem(name: "query", value: query)]
+        if let year { items.append(URLQueryItem(name: "year", value: "\(year)")) }
+
         items.append(URLQueryItem(name: "extended", value: "full"))
 
         let req = makeRequest("/search/movie", queryItems: items)
         let (data, _) = try await URLSession.shared.data(for: req)
         let results = try JSONDecoder().decode([SearchResult].self, from: data)
-
-        // Trakt sorts by relevance, but year now actually filters, so first is usually correct.
-        return results.compactMap(\.movie).first
+        return results.compactMap(\.movie)
     }
 
     func searchShow(query: String, year: Int?) async throws -> SearchResult.Show? {
+        try await searchShows(query: query, year: year).first
+    }
+
+    func searchShows(query: String, year: Int?) async throws -> [SearchResult.Show] {
         var items = [URLQueryItem(name: "query", value: query)]
-        if let year { items.append(URLQueryItem(name: "year", value: "\(year)")) } // ✅ year (not years)
+        if let year { items.append(URLQueryItem(name: "year", value: "\(year)")) }
 
         items.append(URLQueryItem(name: "extended", value: "full"))
 
         let req = makeRequest("/search/show", queryItems: items)
         let (data, _) = try await URLSession.shared.data(for: req)
         let results = try JSONDecoder().decode([SearchResult].self, from: data)
+        return results.compactMap(\.show)
+    }
 
-        return results.compactMap(\.show).first
+    func movie(id: String) async throws -> SearchResult.Movie {
+        let req = makePathRequest("movies/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)",
+                                  queryItems: [URLQueryItem(name: "extended", value: "full")])
+        let (data, _) = try await URLSession.shared.data(for: req)
+        return try JSONDecoder().decode(SearchResult.Movie.self, from: data)
+    }
+
+    func show(id: String) async throws -> SearchResult.Show {
+        let req = makePathRequest("shows/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)",
+                                  queryItems: [URLQueryItem(name: "extended", value: "full")])
+        let (data, _) = try await URLSession.shared.data(for: req)
+        return try JSONDecoder().decode(SearchResult.Show.self, from: data)
     }
 }

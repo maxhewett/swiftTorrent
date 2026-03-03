@@ -13,6 +13,9 @@ struct StoredTorrent: Codable, Hashable {
     let magnet: String
     let savePath: String
     var category: String?
+    var overrideQuery: String?
+    var overrideYear: Int?
+    var overrideType: String?
 }
 
 enum TorrentStore {
@@ -39,7 +42,10 @@ enum TorrentStore {
                     key: MagnetKeyExtractor.key(from: $0.magnet) ?? $0.magnet,
                     magnet: $0.magnet,
                     savePath: $0.savePath,
-                    category: $0.category
+                    category: $0.category,
+                    overrideQuery: nil,
+                    overrideYear: nil,
+                    overrideType: nil
                 )
             }
         }
@@ -56,7 +62,10 @@ enum TorrentStore {
                     key: MagnetKeyExtractor.key(from: $0.magnet) ?? $0.magnet,
                     magnet: $0.magnet,
                     savePath: $0.savePath,
-                    category: $0.tags.sorted().first
+                    category: $0.tags.sorted().first,
+                    overrideQuery: nil,
+                    overrideYear: nil,
+                    overrideType: nil
                 )
             }
         }
@@ -72,7 +81,10 @@ enum TorrentStore {
                     key: MagnetKeyExtractor.key(from: $0.magnet) ?? $0.magnet,
                     magnet: $0.magnet,
                     savePath: $0.savePath,
-                    category: nil
+                    category: nil,
+                    overrideQuery: nil,
+                    overrideYear: nil,
+                    overrideType: nil
                 )
             }
         }
@@ -104,6 +116,18 @@ enum TorrentStore {
         save(items)
     }
 
+    static func updateOverride(key: String, query: String?, year: Int?, type: String?) {
+        var items = load()
+        guard let idx = items.firstIndex(where: {
+            $0.key == key || MagnetKeyExtractor.key(from: $0.magnet) == key || $0.magnet.contains(key)
+        }) else { return }
+
+        items[idx].overrideQuery = query
+        items[idx].overrideYear = year
+        items[idx].overrideType = type
+        save(items)
+    }
+
     static func storeURL() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = appSupport.appendingPathComponent("swiftTorrent", isDirectory: true)
@@ -129,6 +153,15 @@ enum MagnetKeyExtractor {
             if let k = parseBTMH(xt) { return k }
         }
         return nil
+    }
+
+    static func displayName(from magnet: String) -> String? {
+        guard let comps = URLComponents(string: magnet),
+              let value = comps.queryItems?.first(where: { $0.name == "dn" })?.value?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else { return nil }
+        return value
     }
 
     private static func parseBTIH(_ xt: String) -> String? {

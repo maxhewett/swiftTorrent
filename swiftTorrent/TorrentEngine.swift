@@ -44,9 +44,31 @@ struct TorrentFile: Identifiable, Hashable {
 
 @MainActor
 final class TorrentEngine: ObservableObject {
+    struct MetadataCandidate: Identifiable, Hashable {
+        let id: String
+        let title: String
+        let year: Int?
+        let type: MediaMetadata.MediaType
+        let overview: String?
+        let score: Int
+        let traktID: Int?
+        let tmdbID: Int?
+        let imdbID: String?
+        let tvdbID: Int?
+        var posterURL: URL?
+    }
+
+    enum MetadataLookupState: Equatable {
+        case idle
+        case loading
+        case failed
+    }
+
     @Published var torrents: [TorrentRow] = []
     @Published var filesByTorrentID: [String: [TorrentFile]] = [:]
     @Published var mediaByTorrentID: [String: MediaMetadata] = [:]
+    @Published var metadataLookupStateByID: [String: MetadataLookupState] = [:]
+    @Published var metadataCandidatesByID: [String: [MetadataCandidate]] = [:]
 
     private var lastProgressByID: [String: Double] = [:]
 
@@ -73,7 +95,7 @@ final class TorrentEngine: ObservableObject {
         // Re-add saved torrents (don’t re-persist)
         let saved = TorrentStore.load()
         for item in saved {
-            _ = addMagnet(item.magnet, savePath: item.savePath, category: item.category, persist: false)
+            _ = addMagnet(item.magnet, savePath: item.savePath, category: item.category, persist: false, restoring: true)
         }
 
         // Start polling
@@ -121,6 +143,24 @@ final class TorrentEngine: ObservableObject {
         storeEntry(forLiveTorrentID: id)?.savePath
     }
 
+    private func overrideHint(forLiveTorrentID id: String) -> (query: String?, year: Int?, type: MediaMetadata.MediaType?) {
+        guard let entry = storeEntry(forLiveTorrentID: id) else { return (nil, nil, nil) }
+        let type: MediaMetadata.MediaType?
+        switch entry.overrideType?.lowercased() {
+        case "movie":
+            type = .movie
+        case "show":
+            type = .show
+        default:
+            type = nil
+        }
+        return (entry.overrideQuery, entry.overrideYear, type)
+    }
+
+    func currentMetadataOverride(for torrentID: String) -> (query: String?, year: Int?, type: MediaMetadata.MediaType?) {
+        overrideHint(forLiveTorrentID: torrentID)
+    }
+
     // MARK: - Files
 
     func refreshFiles(for torrentID: String) {
@@ -155,101 +195,321 @@ final class TorrentEngine: ObservableObject {
 
     func enrichIfNeeded(for torrent: TorrentRow) {
         if mediaByTorrentID[torrent.id] != nil { return }
+        if metadataLookupStateByID[torrent.id] == .loading { return }
+        refreshMetadata(for: torrent)
+    }
 
-        let c = (torrent.category ?? "").lowercased()
-        let typeHint: MediaMetadata.MediaType =
-            (c.contains("tv") || c.contains("sonarr")) ? .show :
-            (c.contains("movie") || c.contains("radarr")) ? .movie :
-            .movie
+    func refreshMetadata(for torrent: TorrentRow) {
+        mediaByTorrentID[torrent.id] = nil
+        metadataLookupStateByID[torrent.id] = .loading
 
         let parsed = TorrentNameParser.parse(torrent.name)
+        let defaultTypeHint = inferredTypeHint(category: torrent.category, parsed: parsed)
+        let override = overrideHint(forLiveTorrentID: torrent.id)
+        let query = override.query?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? override.query!.trimmingCharacters(in: .whitespacesAndNewlines)
+            : parsed.query
+        let year = override.year ?? parsed.year
+        let typeHint = override.type ?? defaultTypeHint
 
         Task {
             do {
-                let trakt = TraktClient(clientID: "eb92f2cb922619e94a4ca0adcfd9572fc0397acb18a33cb6e65b7f2219983d9e")
-                let fanart = FanartClient(apiKey: "40d7d215cf9c6d77743eaf4e3e9942c8")
-
-                var meta: MediaMetadata?
-
-                switch typeHint {
-                case .movie:
-                    if let m = try await trakt.searchMovie(query: parsed.query, year: parsed.year) {
-                        meta = MediaMetadata(
-                            type: .movie,
-                            title: m.title,
-                            year: m.year,
-                            traktID: m.ids.trakt,
-                            tmdbID: m.ids.tmdb,
-                            imdbID: m.ids.imdb,
-                            tvdbID: m.ids.tvdb,
-                            overview: m.overview,
-                            posterURL: nil,
-                            displaySuffix: parsed.suffix
-                        )
-                    } else if let s = try await trakt.searchShow(query: parsed.query, year: parsed.year) {
-                        meta = MediaMetadata(
-                            type: .show,
-                            title: s.title,
-                            year: s.year,
-                            traktID: s.ids.trakt,
-                            tmdbID: s.ids.tmdb,
-                            imdbID: s.ids.imdb,
-                            tvdbID: s.ids.tvdb,
-                            overview: s.overview,
-                            posterURL: nil,
-                            displaySuffix: parsed.suffix
-                        )
+                var meta = try await resolvedMetadata(query: query, year: year, preferredType: typeHint, displaySuffix: parsed.suffix)
+                guard var metaUnwrapped = meta else {
+                    await MainActor.run {
+                        self.metadataLookupStateByID[torrent.id] = .failed
                     }
-
-                case .show:
-                    if let s = try await trakt.searchShow(query: parsed.query, year: parsed.year) {
-                        meta = MediaMetadata(
-                            type: .show,
-                            title: s.title,
-                            year: s.year,
-                            traktID: s.ids.trakt,
-                            tmdbID: s.ids.tmdb,
-                            imdbID: s.ids.imdb,
-                            tvdbID: s.ids.tvdb,
-                            overview: s.overview,
-                            posterURL: nil,
-                            displaySuffix: parsed.suffix
-                        )
-                    } else if let m = try await trakt.searchMovie(query: parsed.query, year: parsed.year) {
-                        meta = MediaMetadata(
-                            type: .movie,
-                            title: m.title,
-                            year: m.year,
-                            traktID: m.ids.trakt,
-                            tmdbID: m.ids.tmdb,
-                            imdbID: m.ids.imdb,
-                            tvdbID: m.ids.tvdb,
-                            overview: m.overview,
-                            posterURL: nil,
-                            displaySuffix: parsed.suffix
-                        )
-                    }
-                }
-
-                guard var metaUnwrapped = meta else { return }
-
-                if let poster = try await fanart.posterURL(for: metaUnwrapped) {
-                    metaUnwrapped.posterURL = poster
+                    return
                 }
 
                 await MainActor.run {
                     self.mediaByTorrentID[torrent.id] = metaUnwrapped
+                    self.metadataLookupStateByID[torrent.id] = .idle
+                }
+
+                do {
+                    let fanart = FanartClient(apiKey: "40d7d215cf9c6d77743eaf4e3e9942c8")
+                    if let poster = try await fanart.posterURL(for: metaUnwrapped) {
+                        metaUnwrapped.posterURL = poster
+                        await MainActor.run {
+                            guard self.mediaByTorrentID[torrent.id] != nil else { return }
+                            self.mediaByTorrentID[torrent.id] = metaUnwrapped
+                        }
+
+                        if PosterCache.load(for: torrent.id) == nil,
+                           let (data, _) = try? await URLSession.shared.data(from: poster),
+                           let localURL = try? PosterCache.save(data, torrentID: torrent.id) {
+                            metaUnwrapped.localPosterPath = localURL
+                            await MainActor.run {
+                                guard self.mediaByTorrentID[torrent.id] != nil else { return }
+                                self.mediaByTorrentID[torrent.id] = metaUnwrapped
+                            }
+                        }
+                    }
+                } catch {
+                    // Poster fetch is non-critical. Keep the matched metadata visible.
                 }
 
             } catch {
-                // ignore for now
+                await MainActor.run {
+                    self.metadataLookupStateByID[torrent.id] = .failed
+                }
+                return
+            }
+
+            if await MainActor.run(body: { self.mediaByTorrentID[torrent.id] == nil }) {
+                await MainActor.run {
+                    self.metadataLookupStateByID[torrent.id] = .failed
+                }
             }
         }
     }
 
+    func setMetadataOverride(for torrentID: String, query: String?, year: Int?, type: MediaMetadata.MediaType?) {
+        let stable = stableKey(forLiveTorrentID: torrentID)
+        let cleanedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedQuery = cleanedQuery?.isEmpty == false ? cleanedQuery : nil
+        let normalizedType: String?
+        switch type {
+        case .movie:
+            normalizedType = "movie"
+        case .show:
+            normalizedType = "show"
+        case nil:
+            normalizedType = nil
+        }
+        TorrentStore.updateOverride(key: stable, query: normalizedQuery, year: year, type: normalizedType)
+        PosterCache.remove(for: torrentID)
+        mediaByTorrentID[torrentID] = nil
+        metadataLookupStateByID[torrentID] = .idle
+        metadataCandidatesByID[torrentID] = []
+        if let torrent = torrents.first(where: { $0.id == torrentID }) {
+            refreshMetadata(for: torrent)
+        }
+    }
+
+    func fetchMetadataCandidates(for torrentID: String, query: String, year: Int?, preferredType: MediaMetadata.MediaType?) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            metadataCandidatesByID[torrentID] = []
+            return
+        }
+
+        Task {
+            let candidates = await previewMetadataCandidates(query: trimmed, year: year, preferredType: preferredType)
+            await MainActor.run {
+                self.metadataCandidatesByID[torrentID] = candidates
+            }
+        }
+    }
+
+    func previewMetadata(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, displaySuffix: String? = nil) async -> MediaMetadata? {
+        try? await resolvedMetadata(query: query, year: year, preferredType: preferredType, displaySuffix: displaySuffix)
+    }
+
+    func previewMetadataCandidates(query: String, year: Int?, preferredType: MediaMetadata.MediaType?) async -> [MetadataCandidate] {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        do {
+            let candidates = try await resolvedMetadataCandidates(query: query, year: year, preferredType: preferredType)
+            return await metadataCandidatePosters(candidates)
+        } catch {
+            return []
+        }
+    }
+
+    private func bestMovieMatch(trakt: TraktClient, query: String, year: Int?) async throws -> TraktClient.SearchResult.Movie? {
+        let exact = try await trakt.searchMovies(query: query, year: year)
+        let fallback = year == nil ? [] : try await trakt.searchMovies(query: query, year: nil)
+        let slugMatches = try await slugMovieMatches(trakt: trakt, query: query, year: year)
+        let merged = mergeMovies(exact + fallback + slugMatches)
+        let ranked = merged
+            .map { ($0, scoreMovie($0, query: query, year: year)) }
+            .sorted { $0.1 > $1.1 }
+        guard let best = ranked.first else { return nil }
+        if let year, let candidateYear = best.0.year, abs(year - candidateYear) > 1 {
+            return nil
+        }
+        return best.1 >= 45 ? best.0 : nil
+    }
+
+    private func bestShowMatch(trakt: TraktClient, query: String, year: Int?) async throws -> TraktClient.SearchResult.Show? {
+        let exact = try await trakt.searchShows(query: query, year: year)
+        let fallback = year == nil ? [] : try await trakt.searchShows(query: query, year: nil)
+        let slugMatches = try await slugShowMatches(trakt: trakt, query: query, year: year)
+        let merged = mergeShows(exact + fallback + slugMatches)
+        let ranked = merged
+            .map { ($0, scoreShow($0, query: query, year: year)) }
+            .sorted { $0.1 > $1.1 }
+        guard let best = ranked.first else { return nil }
+        if let year, let candidateYear = best.0.year, abs(year - candidateYear) > 1 {
+            return nil
+        }
+        return best.1 >= 45 ? best.0 : nil
+    }
+
+    private func mergeMovies(_ items: [TraktClient.SearchResult.Movie]) -> [TraktClient.SearchResult.Movie] {
+        var seen: Set<String> = []
+        return items.filter {
+            let key = "\($0.ids.trakt ?? -1)|\($0.ids.tmdb ?? -1)|\($0.title.lowercased())|\($0.year ?? -1)"
+            return seen.insert(key).inserted
+        }
+    }
+
+    private func mergeShows(_ items: [TraktClient.SearchResult.Show]) -> [TraktClient.SearchResult.Show] {
+        var seen: Set<String> = []
+        return items.filter {
+            let key = "\($0.ids.trakt ?? -1)|\($0.ids.tmdb ?? -1)|\($0.title.lowercased())|\($0.year ?? -1)"
+            return seen.insert(key).inserted
+        }
+    }
+
+    private func scoreMovie(_ item: TraktClient.SearchResult.Movie, query: String, year: Int?) -> Int {
+        scoreTitle(item.title, query: query, year: year, candidateYear: item.year)
+    }
+
+    private func scoreShow(_ item: TraktClient.SearchResult.Show, query: String, year: Int?) -> Int {
+        scoreTitle(item.title, query: query, year: year, candidateYear: item.year)
+    }
+
+    private func scoreTitle(_ title: String, query: String, year: Int?, candidateYear: Int?) -> Int {
+        let normalizedTitle = normalizeLookupText(title)
+        let normalizedQuery = normalizeLookupText(query)
+
+        var score = 0
+        if normalizedTitle == normalizedQuery { score += 120 }
+        if normalizedTitle.hasPrefix(normalizedQuery) { score += 45 }
+        if normalizedTitle.contains(normalizedQuery) { score += 25 }
+
+        let queryTokens = Set(normalizedQuery.split(separator: " ").map(String.init))
+        let titleTokens = Set(normalizedTitle.split(separator: " ").map(String.init))
+        score += queryTokens.intersection(titleTokens).count * 12
+
+        if let year, let candidateYear {
+            if year == candidateYear { score += 80 }
+            else if abs(year - candidateYear) == 1 { score += 15 }
+            else { score -= 25 }
+        }
+
+        if normalizedTitle.count < normalizedQuery.count / 2 { score -= 20 }
+        return score
+    }
+
+    private func normalizeLookupText(_ text: String) -> String {
+        let lowered = text.lowercased()
+        let replaced = String(String.UnicodeScalarView(lowered.unicodeScalars.map { scalar in
+            CharacterSet.alphanumerics.contains(scalar) ? scalar : " "
+        }))
+        let collapsed = replaced.split(separator: " ").joined(separator: " ")
+        return collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func slugMovieMatches(trakt: TraktClient, query: String, year: Int?) async throws -> [TraktClient.SearchResult.Movie] {
+        guard let year else { return [] }
+        let slug = slugCandidate(for: query, year: year)
+        guard let movie = try? await trakt.movie(id: slug) else { return [] }
+        return [movie]
+    }
+
+    private func slugShowMatches(trakt: TraktClient, query: String, year: Int?) async throws -> [TraktClient.SearchResult.Show] {
+        guard let year else { return [] }
+        let slug = slugCandidate(for: query, year: year)
+        guard let show = try? await trakt.show(id: slug) else { return [] }
+        return [show]
+    }
+
+    private func slugCandidate(for query: String, year: Int) -> String {
+        let normalized = normalizeLookupText(query)
+        let base = normalized.replacingOccurrences(of: " ", with: "-")
+        return "\(base)-\(year)"
+    }
+
+    private func inferredTypeHint(category: String?, parsed: TorrentNameParser.Parsed) -> MediaMetadata.MediaType {
+        let c = (category ?? "").lowercased()
+        if c.contains("tv") || c.contains("sonarr") { return .show }
+        if c.contains("movie") || c.contains("radarr") { return .movie }
+        return parsed.inferredType ?? .movie
+    }
+
+    private func resolvedMetadata(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, displaySuffix: String?) async throws -> MediaMetadata? {
+        let candidates = try await resolvedMetadataCandidates(query: query, year: year, preferredType: preferredType)
+        guard let best = candidates.first else { return nil }
+        return MediaMetadata(
+            type: best.type,
+            title: best.title,
+            year: best.year,
+            traktID: best.traktID,
+            tmdbID: best.tmdbID,
+            imdbID: best.imdbID,
+            tvdbID: best.tvdbID,
+            overview: best.overview,
+            posterURL: best.posterURL,
+            localPosterPath: nil,
+            displaySuffix: displaySuffix
+        )
+    }
+
+    private func resolvedMetadataCandidates(query: String, year: Int?, preferredType: MediaMetadata.MediaType?) async throws -> [MetadataCandidate] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trakt = TraktClient(clientID: "eb92f2cb922619e94a4ca0adcfd9572fc0397acb18a33cb6e65b7f2219983d9e")
+        var candidates: [MetadataCandidate] = []
+
+        if preferredType != .show {
+            let exact = try await trakt.searchMovies(query: trimmed, year: year)
+            let fallback = year == nil ? [] : try await trakt.searchMovies(query: trimmed, year: nil)
+            let slugMatches = try await slugMovieMatches(trakt: trakt, query: trimmed, year: year)
+            let merged = mergeMovies(exact + fallback + slugMatches)
+            candidates.append(contentsOf: merged.map {
+                MetadataCandidate(id: "movie-\($0.ids.trakt ?? -1)-\($0.ids.tmdb ?? -1)-\($0.title)-\($0.year ?? -1)", title: $0.title, year: $0.year, type: .movie, overview: $0.overview, score: scoreMovie($0, query: trimmed, year: year), traktID: $0.ids.trakt, tmdbID: $0.ids.tmdb, imdbID: $0.ids.imdb, tvdbID: $0.ids.tvdb, posterURL: nil)
+            })
+        }
+
+        if preferredType != .movie {
+            let exact = try await trakt.searchShows(query: trimmed, year: year)
+            let fallback = year == nil ? [] : try await trakt.searchShows(query: trimmed, year: nil)
+            let slugMatches = try await slugShowMatches(trakt: trakt, query: trimmed, year: year)
+            let merged = mergeShows(exact + fallback + slugMatches)
+            candidates.append(contentsOf: merged.map {
+                MetadataCandidate(id: "show-\($0.ids.trakt ?? -1)-\($0.ids.tmdb ?? -1)-\($0.title)-\($0.year ?? -1)", title: $0.title, year: $0.year, type: .show, overview: $0.overview, score: scoreShow($0, query: trimmed, year: year), traktID: $0.ids.trakt, tmdbID: $0.ids.tmdb, imdbID: $0.ids.imdb, tvdbID: $0.ids.tvdb, posterURL: nil)
+            })
+        }
+
+        let withPosters = await metadataCandidatePosters(candidates)
+        return Array(withPosters.sorted {
+            let lhsScore = $0.score + ($0.posterURL == nil ? 0 : 18)
+            let rhsScore = $1.score + ($1.posterURL == nil ? 0 : 18)
+            if lhsScore == rhsScore {
+                return ($0.year ?? 0) > ($1.year ?? 0)
+            }
+            return lhsScore > rhsScore
+        }.prefix(10))
+    }
+
+    private func metadataCandidatePosters(_ candidates: [MetadataCandidate]) async -> [MetadataCandidate] {
+        guard !candidates.isEmpty else { return [] }
+        let fanart = FanartClient(apiKey: "40d7d215cf9c6d77743eaf4e3e9942c8")
+        var results = candidates
+
+        await withTaskGroup(of: (String, URL?).self) { group in
+            for candidate in candidates {
+                group.addTask {
+                    let metadata = MediaMetadata(type: candidate.type, title: candidate.title, year: candidate.year, traktID: candidate.traktID, tmdbID: candidate.tmdbID, imdbID: candidate.imdbID, tvdbID: candidate.tvdbID, overview: candidate.overview, posterURL: nil, localPosterPath: nil, displaySuffix: nil)
+                    return (candidate.id, try? await fanart.posterURL(for: metadata))
+                }
+            }
+
+            for await (candidateID, posterURL) in group {
+                if let index = results.firstIndex(where: { $0.id == candidateID }) {
+                    results[index].posterURL = posterURL
+                }
+            }
+        }
+
+        return results
+    }
+
     // MARK: - Add
 
-    func addMagnet(_ magnet: String, savePath: String, category: String? = nil, persist: Bool = true) -> String? {
+    func addMagnet(_ magnet: String, savePath: String, category: String? = nil, persist: Bool = true, restoring: Bool = false, overrideQuery: String? = nil, overrideYear: Int? = nil, overrideType: MediaMetadata.MediaType? = nil) -> String? {
         guard let s = session else { return "Session not initialised" }
 
         let trimmedMagnet = magnet.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -266,7 +526,21 @@ final class TorrentEngine: ObservableObject {
 
         if persist {
             var items = TorrentStore.load()
-            let entry = StoredTorrent(key: stable, magnet: trimmedMagnet, savePath: savePath, category: normalizeCategory(category))
+            let entry = StoredTorrent(
+                key: stable,
+                magnet: trimmedMagnet,
+                savePath: savePath,
+                category: normalizeCategory(category),
+                overrideQuery: overrideQuery?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? overrideQuery?.trimmingCharacters(in: .whitespacesAndNewlines) : nil,
+                overrideYear: overrideYear,
+                overrideType: {
+                    switch overrideType {
+                    case .movie: return "movie"
+                    case .show: return "show"
+                    case nil: return nil
+                    }
+                }()
+            )
             if let idx = items.firstIndex(where: { $0.key == stable }) { items[idx] = entry }
             else { items.append(entry) }
             TorrentStore.save(items)
@@ -282,15 +556,21 @@ final class TorrentEngine: ObservableObject {
         guard ok else { return String(cString: errBuf) }
 
         // Check max active downloads — if we're at the limit, queue this one instead
-        let maxActive = AppSettings.shared.maxActiveDownloads
-        let activeCount = torrents.filter { !$0.isPaused && !$0.isSeeding && $0.progress < 0.999 }.count
-        if maxActive > 0 && activeCount >= maxActive {
-            queuedTorrentKeys.append(stable)
+        if restoring, desiredPausedKeys.contains(stable) {
             _ = stable.withCString { st_torrent_pause(s, $0) }
         } else {
-            desiredPausedKeys.remove(stable)
-            savePausedKeys(desiredPausedKeys)
-            _ = stable.withCString { st_torrent_resume(s, $0) }
+            let maxActive = AppSettings.shared.maxActiveDownloads
+            let activeCount = torrents.filter { !$0.isPaused && !$0.isSeeding && $0.progress < 0.999 }.count
+            if maxActive > 0 && activeCount >= maxActive {
+                queuedTorrentKeys.append(stable)
+                _ = stable.withCString { st_torrent_pause(s, $0) }
+            } else {
+                if !restoring {
+                    desiredPausedKeys.remove(stable)
+                    savePausedKeys(desiredPausedKeys)
+                }
+                _ = stable.withCString { st_torrent_resume(s, $0) }
+            }
         }
 
         schedulePoll()
@@ -312,6 +592,7 @@ final class TorrentEngine: ObservableObject {
         _ = id.withCString { st_torrent_pause(s, $0) }
 
         let stable = stableKey(forLiveTorrentID: id)
+        queuedTorrentKeys.removeAll { $0 == stable }
         desiredPausedKeys.insert(stable)
         savePausedKeys(desiredPausedKeys)
 
@@ -340,8 +621,10 @@ final class TorrentEngine: ObservableObject {
         desiredPausedKeys.remove(stable)
         queuedTorrentKeys.removeAll { $0 == stable }
         savePausedKeys(desiredPausedKeys)
+        PosterCache.remove(for: id)
         filesByTorrentID[id] = nil
         mediaByTorrentID[id] = nil
+        metadataLookupStateByID[id] = nil
         lastProgressByID[id] = nil
 
         poll()
@@ -449,14 +732,12 @@ final class TorrentEngine: ObservableObject {
     private func applyDesiredPauseStateUsingStoredKeys() {
         guard let s = session else { return }
 
-        // Enforce pause/resume by STORED keys (stable across relaunch)
+        // Only re-apply explicit user pauses. Non-paused torrents are handled by restore + queue policy.
         let saved = TorrentStore.load()
         for item in saved {
             let key = item.key
             if desiredPausedKeys.contains(key) {
                 _ = key.withCString { st_torrent_pause(s, $0) }
-            } else {
-                _ = key.withCString { st_torrent_resume(s, $0) }
             }
         }
 
@@ -479,6 +760,7 @@ final class TorrentEngine: ObservableObject {
         var available = maxActive - activeCount
         while available > 0, !queuedTorrentKeys.isEmpty {
             let key = queuedTorrentKeys.removeFirst()
+            if desiredPausedKeys.contains(key) { continue }
             _ = key.withCString { st_torrent_resume(s, $0) }
             available -= 1
         }
@@ -586,6 +868,7 @@ final class TorrentEngine: ObservableObject {
                         await MainActor.run {
                             settings.markCleaned(stable)
                             settings.hideTorrent(stable)
+                            PosterCache.remove(for: t.id)
                         }
                     }
                 }
@@ -600,6 +883,7 @@ final class TorrentEngine: ObservableObject {
                     await MainActor.run {
                         settings.markCleaned(stable)
                         settings.hideTorrent(stable)
+                        PosterCache.remove(for: t.id)
                     }
                 }
             }

@@ -15,6 +15,7 @@ enum TorrentNameParser {
         let season: Int?
         let episode: Int?
         let isComplete: Bool
+        let inferredType: MediaMetadata.MediaType?
 
         var suffix: String? {
             if isComplete { return "Complete" }
@@ -78,29 +79,42 @@ enum TorrentNameParser {
             episode = nil
         }
 
+        let looksLikeShow =
+            season != nil ||
+            episode != nil ||
+            isComplete ||
+            containsEpisodeToken(lower) ||
+            containsSeasonToken(lower)
+
         // Build query: remove common junk + season/episode/year tokens
         var q = cleaned
 
         // Remove year (only if plausible)
         if let y = year {
-            q = stripRegex(q, #"(?<!\d)\#(y)(?!\d)"#) // exact year token
+            q = stripRegex(q, "(?<!\\d)\(y)(?!\\d)") // exact year token
         }
 
         // Remove season/episode markers
         q = stripRegex(q, #"\bS\d{1,2}\s*E\d{1,3}\b"#, options: [.caseInsensitive])
         q = stripRegex(q, #"\b\d{1,2}\s*x\s*\d{1,3}\b"#, options: [.caseInsensitive])
+        q = stripRegex(q, #"\bEpisode\s*\d{1,3}\b"#, options: [.caseInsensitive])
+        q = stripRegex(q, #"\bComplete\b"#, options: [.caseInsensitive])
 
         // Remove season-only markers (keep boundaries!)
         q = stripRegex(q, #"\bS\d{1,2}\b"#, options: [.caseInsensitive])
         q = stripRegex(q, #"\bSeason\s*\d{1,2}\b"#, options: [.caseInsensitive])
         q = stripRegex(q, #"\bSeries\s*\d{1,2}\b"#, options: [.caseInsensitive])
+        q = stripRegex(q, #"\bSeason\s+\d{1,2}(?:\s+\d{1,2})+\b"#, options: [.caseInsensitive])
+        q = stripRegex(q, #"\bSeries\s+\d{1,2}(?:\s+\d{1,2})+\b"#, options: [.caseInsensitive])
 
         // Remove obvious pack ranges that shouldn’t influence the title
         q = stripRegex(q, #"\bS\d{1,2}\s*-\s*S\d{1,2}\b"#, options: [.caseInsensitive])
         q = stripRegex(q, #"\bSeason\s*\d{1,2}\s*-\s*\d{1,2}\b"#, options: [.caseInsensitive])
 
         // Remove common tags (rough) — plus numeric-ish codec tokens
-        q = stripRegex(q, #"\b(480p|720p|1080p|2160p|4k|hdr|sdr|dv|dolby|vision|x264|x265|h264|h265|hevc|avc|webrip|web\-dl|webdl|bluray|bdrip|dvdrip|hdrip|cam|ts|tc|aac|ac3|dts|truehd|atmos|remux|repack|proper|extended|unrated|rarbg|yts|eztv)\b"#, options: [.caseInsensitive])
+        q = stripRegex(q, #"\b(480p|720p|1080p|2160p|4k|hdr|sdr|dv|dolby|vision|x264|x265|h264|h265|h\s*264|h\s*265|hevc|avc|webrip|web\s*dl|web\-dl|webdl|bluray|bdrip|dvdrip|hdrip|cam|ts|tc|aac|ac3|dts|truehd|atmos|remux|repack|proper|extended|unrated|rarbg|yts|eztv|amzn|amazon|nf|netflix|dsnp|hmax|ddp\d(?:[ ._-]?\d)?|dd\d(?:[ ._-]?\d)?)\b"#, options: [.caseInsensitive])
+
+        q = stripLikelyReleaseGroup(q, original: name)
 
         q = q.replacingOccurrences(of: "  ", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -113,7 +127,8 @@ enum TorrentNameParser {
             year: year,
             season: season,
             episode: episode,
-            isComplete: isComplete
+            isComplete: isComplete,
+            inferredType: looksLikeShow ? .show : nil
         )
     }
 
@@ -202,5 +217,35 @@ enum TorrentNameParser {
             .map { re in
                 re.firstMatch(in: lower, range: NSRange(lower.startIndex..<lower.endIndex, in: lower)) != nil
             } ?? false
+    }
+
+    private static func containsEpisodeToken(_ lower: String) -> Bool {
+        (try? NSRegularExpression(pattern: #"\bepisode\s*\d{1,3}\b"#, options: [.caseInsensitive]))
+            .map { re in
+                re.firstMatch(in: lower, range: NSRange(lower.startIndex..<lower.endIndex, in: lower)) != nil
+            } ?? false
+    }
+
+    private static func containsSeasonToken(_ lower: String) -> Bool {
+        (try? NSRegularExpression(pattern: #"\b(season|series)\s*\d{1,2}\b"#, options: [.caseInsensitive]))
+            .map { re in
+                re.firstMatch(in: lower, range: NSRange(lower.startIndex..<lower.endIndex, in: lower)) != nil
+            } ?? false
+    }
+
+    private static func stripLikelyReleaseGroup(_ query: String, original: String) -> String {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tokens = trimmed.split(separator: " ").map(String.init)
+        guard tokens.count > 1 else { return trimmed }
+        guard original.contains("-") else { return trimmed }
+
+        let last = tokens.last ?? ""
+        let looksLikeGroup =
+            last.count <= 12 &&
+            last.rangeOfCharacter(from: .decimalDigits) == nil &&
+            last.rangeOfCharacter(from: .letters) != nil
+
+        guard looksLikeGroup else { return trimmed }
+        return tokens.dropLast().joined(separator: " ")
     }
 }
