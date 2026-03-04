@@ -3,13 +3,13 @@
     <channel>
         <title>swiftTorrent</title>
         <item>
-            <title>0.1.3</title>
-            <pubDate>Wed, 04 Mar 2026 12:29:02 +1300</pubDate>
-            <sparkle:version>14</sparkle:version>
-            <sparkle:shortVersionString>0.1.3</sparkle:shortVersionString>
+            <title>0.1.4</title>
+            <pubDate>Wed, 04 Mar 2026 13:24:09 +1300</pubDate>
+            <sparkle:version>15</sparkle:version>
+            <sparkle:shortVersionString>0.1.4</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/maxhewett/swiftTorrent/releases/download/v0.1.3/swiftTorrent-0.1.3.zip" length="13021385" type="application/octet-stream" sparkle:edSignature="gF1TfpQ2w2QWGDQqMsZY1naohRy+2aaQYzylhtgBWHSAen9DeGjOq9WLZzRj4BvFTGYLxRojUEcAnuH8T5bsCA=="/>
+            <enclosure url="https://github.com/maxhewett/swiftTorrent/releases/download/v0.1.4/swiftTorrent-0.1.4.zip" length="12941225" type="application/octet-stream" sparkle:edSignature="XUoH4sJUndPRMT+PoL/HZ3KcFbCvqfdzuw8P/zmEnzj2NeQMJ85jDt6WwZVVtq1kqjfeinsvk/NQTBXd/FTlCw=="/>
         </item>
     </channel>
 </rss>
