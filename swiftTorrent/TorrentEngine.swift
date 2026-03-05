@@ -82,6 +82,8 @@ final class TorrentEngine: ObservableObject {
 
     // Torrents paused by the download queue (distinct from user-paused)
     private var queuedTorrentKeys: [String] = []
+    // Newly added torrents that should be resumed once they appear with a live ID.
+    private var pendingAutoResumeKeys: Set<String> = []
 
     // MARK: - Pause persistence (by STORED torrent key)
     private let pausedKeysDefaultsKey = "swiftTorrent.pausedTorrentKeys"
@@ -627,7 +629,7 @@ final class TorrentEngine: ObservableObject {
                     desiredPausedKeys.remove(stable)
                     savePausedKeys(desiredPausedKeys)
                 }
-                _ = stable.withCString { st_torrent_resume(s, $0) }
+                pendingAutoResumeKeys.insert(stable)
             }
         }
 
@@ -680,6 +682,7 @@ final class TorrentEngine: ObservableObject {
         AppSettings.shared.clearRecentCompletionMark(for: stable)
         desiredPausedKeys.remove(stable)
         queuedTorrentKeys.removeAll { $0 == stable }
+        pendingAutoResumeKeys.remove(stable)
         startedAtByStableKey[stable] = nil
         savePausedKeys(desiredPausedKeys)
         PosterCache.remove(for: id)
@@ -794,6 +797,8 @@ final class TorrentEngine: ObservableObject {
             didBootstrapCompletionTracking = true
         }
 
+        applyPendingAutoResumes(current: rows, storedItems: storedItems)
+
         // Promote queued torrents when a download slot is free
         promoteQueuedIfNeeded()
 
@@ -808,6 +813,27 @@ final class TorrentEngine: ObservableObject {
         autoCleanupIfNeeded(previous: previous, current: rows)
 
         for t in rows { lastProgressByID[t.id] = t.progress }
+    }
+
+    private func applyPendingAutoResumes(current: [TorrentRow], storedItems: [StoredTorrent]) {
+        guard !pendingAutoResumeKeys.isEmpty, let s = session else { return }
+
+        for row in current {
+            let stable = stableKey(forLiveTorrentID: row.id, items: storedItems)
+            guard pendingAutoResumeKeys.contains(stable) else { continue }
+
+            // Respect queue/user pause decisions.
+            if queuedTorrentKeys.contains(stable) || desiredPausedKeys.contains(stable) {
+                pendingAutoResumeKeys.remove(stable)
+                continue
+            }
+
+            if row.isPaused {
+                _ = row.id.withCString { st_torrent_resume(s, $0) }
+            } else {
+                pendingAutoResumeKeys.remove(stable)
+            }
+        }
     }
 
     private func captureRecentCompletions(previous: [String: TorrentRow], current: [TorrentRow], storedItems: [StoredTorrent]) {
