@@ -1,0 +1,15 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>swiftTorrent</title>
+        <item>
+            <title>0.19</title>
+            <pubDate>Thu, 05 Mar 2026 23:01:46 +1300</pubDate>
+            <sparkle:version>019</sparkle:version>
+            <sparkle:shortVersionString>0.19</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/maxhewett/swiftTorrent/releases/download/v0.19-beta/swiftTorrent-0.19-beta.zip" length="14619835" type="application/octet-stream" sparkle:edSignature="O++sevitf44MIcsB0yOoMY+5fUhH0moEq+SSf0N7plhXv0OJokPjfCVrvri5ttfkdfi552UfrG+UTBvspwIqDg=="/>
+        </item>
+    </channel>
+</rss>
