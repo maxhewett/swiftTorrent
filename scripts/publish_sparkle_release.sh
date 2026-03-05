@@ -2,12 +2,13 @@
 set -euo pipefail
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage:
-  scripts/publish_sparkle_release.sh <version> <exported-app-or-zip> [release-notes-html]
+  scripts/publish_sparkle_release.sh <version> <exported-app-or-zip> [release-notes-html] [--channel stable|beta]
+  scripts/publish_sparkle_release.sh --version <version> --artifact <path> [--release-notes <path>] [--channel stable|beta]
 
 Example:
-  scripts/publish_sparkle_release.sh 0.0.8 ~/Desktop/swiftTorrent.app docs/release-notes/0.0.8.html
+  scripts/publish_sparkle_release.sh 0.1.5 ~/Desktop/swiftTorrent.app docs/release-notes/0.1.5.html --channel beta
 
 What it does:
   - accepts either a signed exported .app or a prebuilt .zip
@@ -17,26 +18,79 @@ What it does:
   - uploads the release asset when gh is available and authenticated
   - runs Sparkle's generate_appcast against the supplied signed archive
   - rewrites enclosure/release notes URLs for GitHub Releases / GitHub Pages
-  - writes the resulting appcast to docs/appcast.xml
+  - writes appcast to docs/appcast.xml (stable) or docs/beta/appcast.xml (beta)
 
 Requirements:
   - Sparkle must already be resolved by Xcode
   - generate_appcast must be available, or SPARKLE_GENERATE_APPCAST must be set
   - if your Sparkle setup requires an explicit key file, set SPARKLE_PRIVATE_KEY_PATH
-EOF
+USAGE
 }
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
-  usage
-  exit 1
-fi
+VERSION=""
+INPUT_PATH=""
+RELEASE_NOTES_PATH=""
+CHANNEL="stable"
 
-VERSION="$1"
-INPUT_PATH="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
-RELEASE_NOTES_PATH="${3:-}"
+parse_args() {
+  if [[ $# -ge 2 && "$1" != --* ]]; then
+    VERSION="$1"
+    INPUT_PATH="$2"
+    RELEASE_NOTES_PATH="${3:-}"
+    shift $(( $# >= 3 ? 3 : 2 ))
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --version)
+        VERSION="${2:-}"
+        shift 2
+        ;;
+      --artifact)
+        INPUT_PATH="${2:-}"
+        shift 2
+        ;;
+      --release-notes)
+        RELEASE_NOTES_PATH="${2:-}"
+        shift 2
+        ;;
+      --channel)
+        CHANNEL="${2:-}"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown argument: $1" >&2
+        usage
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ -z "$VERSION" || -z "$INPUT_PATH" ]]; then
+    usage
+    exit 1
+  fi
+
+  if [[ "$CHANNEL" != "stable" && "$CHANNEL" != "beta" ]]; then
+    echo "Unsupported channel: $CHANNEL" >&2
+    exit 1
+  fi
+}
+
+parse_args "$@"
+
+INPUT_PATH="$(cd "$(dirname "$INPUT_PATH")" && pwd)/$(basename "$INPUT_PATH")"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOCS_DIR="$ROOT_DIR/docs"
-APPCAST_PATH="$DOCS_DIR/appcast.xml"
+APPCAST_DIR="$DOCS_DIR"
+if [[ "$CHANNEL" == "beta" ]]; then
+  APPCAST_DIR="$DOCS_DIR/beta"
+fi
+APPCAST_PATH="$APPCAST_DIR/appcast.xml"
 RELEASES_DIR="$ROOT_DIR/release-artifacts"
 APP_NAME="swiftTorrent"
 
@@ -86,16 +140,29 @@ else
   exit 1
 fi
 
-TAG="v${VERSION}"
-PAGES_BASE_URL="https://${OWNER}.github.io/${REPO}"
-RELEASE_NOTES_URL=""
+TAG_SUFFIX=""
+if [[ "$CHANNEL" == "beta" ]]; then
+  TAG_SUFFIX="-beta"
+fi
+TAG="v${VERSION}${TAG_SUFFIX}"
 
+PAGES_BASE_URL="https://${OWNER}.github.io/${REPO}"
+CHANNEL_PAGES_BASE_URL="$PAGES_BASE_URL"
+if [[ "$CHANNEL" == "beta" ]]; then
+  CHANNEL_PAGES_BASE_URL="${PAGES_BASE_URL}/beta"
+fi
+
+RELEASE_NOTES_URL=""
 mkdir -p "$RELEASES_DIR"
-mkdir -p "$DOCS_DIR"
+mkdir -p "$APPCAST_DIR"
 
 make_archive_if_needed() {
   local input_path="$1"
-  local output_path="$RELEASES_DIR/${APP_NAME}-${VERSION}.zip"
+  local suffix=""
+  if [[ "$CHANNEL" == "beta" ]]; then
+    suffix="-beta"
+  fi
+  local output_path="$RELEASES_DIR/${APP_NAME}-${VERSION}${suffix}.zip"
 
   if [[ -d "$input_path" && "$input_path" == *.app ]]; then
     echo "Packaging exported app into $(basename "$output_path")..." >&2
@@ -142,10 +209,14 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 cp "$ARCHIVE_PATH" "$TMP_DIR/"
 
 if [[ -n "$RELEASE_NOTES_PATH" ]]; then
-  mkdir -p "$DOCS_DIR/release-notes"
+  RELEASE_NOTES_DIR="$DOCS_DIR/release-notes"
+  if [[ "$CHANNEL" == "beta" ]]; then
+    RELEASE_NOTES_DIR="$DOCS_DIR/beta/release-notes"
+  fi
+  mkdir -p "$RELEASE_NOTES_DIR"
   RELEASE_NOTES_BASENAME="${VERSION}.html"
-  cp "$RELEASE_NOTES_PATH" "$DOCS_DIR/release-notes/$RELEASE_NOTES_BASENAME"
-  RELEASE_NOTES_URL="${PAGES_BASE_URL}/release-notes/${RELEASE_NOTES_BASENAME}"
+  cp "$RELEASE_NOTES_PATH" "$RELEASE_NOTES_DIR/$RELEASE_NOTES_BASENAME"
+  RELEASE_NOTES_URL="${CHANNEL_PAGES_BASE_URL}/release-notes/${RELEASE_NOTES_BASENAME}"
 fi
 
 CMD=("$GENERATE_APPCAST" "$TMP_DIR")
@@ -165,10 +236,10 @@ if [[ -z "${GENERATED_APPCAST:-}" || ! -f "$GENERATED_APPCAST" ]]; then
 fi
 
 cp "$GENERATED_APPCAST" "$APPCAST_PATH"
-perl -0pi -e 's#url="[^"]*'"$ASSET_NAME"'\"#url="'"$DOWNLOAD_URL"'"#g' "$APPCAST_PATH"
+perl -0pi -e "s#url=\"[^\"]*${ASSET_NAME}\"#url=\"${DOWNLOAD_URL}\"#g" "$APPCAST_PATH"
 
 if [[ -n "$RELEASE_NOTES_URL" ]]; then
-  perl -0pi -e 's#sparkle:releaseNotesLink="[^"]*"#sparkle:releaseNotesLink="'"$RELEASE_NOTES_URL"'"#g' "$APPCAST_PATH"
+  perl -0pi -e "s#sparkle:releaseNotesLink=\"[^\"]*\"#sparkle:releaseNotesLink=\"${RELEASE_NOTES_URL}\"#g" "$APPCAST_PATH"
 fi
 
 publish_release_if_possible() {
@@ -193,7 +264,11 @@ publish_release_if_possible() {
     echo "Uploading asset to existing GitHub Release ${TAG}..."
   else
     echo "Creating GitHub Release ${TAG}..."
-    gh release create "$TAG" --repo "${OWNER}/${REPO}" --title "${APP_NAME} ${VERSION}" "${notes_args[@]}"
+    local create_args=("$TAG" --repo "${OWNER}/${REPO}" --title "${APP_NAME} ${VERSION}${TAG_SUFFIX}" "${notes_args[@]}")
+    if [[ "$CHANNEL" == "beta" ]]; then
+      create_args+=(--prerelease)
+    fi
+    gh release create "${create_args[@]}"
   fi
 
   echo "Uploading ${ASSET_NAME} to GitHub Release ${TAG}..."
@@ -204,6 +279,7 @@ publish_release_if_possible
 
 echo "Updated appcast: $APPCAST_PATH"
 echo "Archive: $ARCHIVE_PATH"
+echo "Release channel: $CHANNEL"
 echo "Release asset URL: $DOWNLOAD_URL"
 if [[ -n "$RELEASE_NOTES_URL" ]]; then
   echo "Release notes URL: $RELEASE_NOTES_URL"
@@ -211,5 +287,5 @@ fi
 echo
 echo "Next:"
 echo "1. Verify GitHub Release ${TAG} exists and contains ${ASSET_NAME}"
-echo "2. Commit docs/appcast.xml and any docs/release-notes/*.html changes"
+echo "2. Commit ${APPCAST_PATH#$ROOT_DIR/} and any docs/release-notes changes"
 echo "3. Push main so GitHub Pages publishes the updated appcast"

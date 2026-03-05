@@ -72,19 +72,48 @@ private struct GeneralSettingsTab: View {
                 title: "Updates",
                 subtitle: "Sparkle checks the GitHub-hosted appcast for new releases. The feed URL and public key must already be configured in the app target."
             ) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Software updates")
-                        Text(appUpdater.isConfigured
-                             ? "Checks GitHub-hosted Sparkle updates."
-                             : "Set SUFeedURL and SUPublicEDKey to enable Sparkle updates.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Update Channel", systemImage: appUpdater.selectedChannel.symbolName)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(appUpdater.selectedChannel == .beta ? .orange : .secondary)
+
+                        Picker("Update Channel", selection: Binding(
+                            get: { appUpdater.selectedChannel },
+                            set: { appUpdater.setUpdateChannel($0) }
+                        )) {
+                            ForEach(AppUpdater.UpdateChannel.allCases) { channel in
+                                Text(channel.label).tag(channel)
+                            }
+                        }
+                        .pickerStyle(.segmented)
                     }
-                    Spacer()
-                    Button("Check Now") { appUpdater.checkForUpdates() }
-                        .buttonStyle(.bordered)
-                        .disabled(!appUpdater.canCheckForUpdates)
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Software updates")
+                            Text(appUpdater.isConfigured
+                                 ? "Checks Sparkle updates from the selected feed."
+                                 : "Set SUFeedURL and SUPublicEDKey to enable Sparkle updates.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Check Now") { appUpdater.checkForUpdates() }
+                            .buttonStyle(.bordered)
+                            .disabled(!appUpdater.canCheckForUpdates)
+                    }
+
+                    HStack(spacing: 14) {
+                        SettingsHint(title: "Feed", detail: appUpdater.feedURLString.isEmpty ? "Not configured" : appUpdater.feedURLString)
+                        SettingsHint(title: "Public Key", detail: appUpdater.hasPublicKey ? "Installed" : "Missing")
+                    }
+
+                    if appUpdater.selectedChannel == .beta {
+                        Label("Beta channel is enabled. Updates will come from the beta appcast feed.", systemImage: "flask.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
             }
         }

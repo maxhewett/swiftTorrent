@@ -71,6 +71,8 @@ final class TorrentEngine: ObservableObject {
     @Published var metadataCandidatesByID: [String: [MetadataCandidate]] = [:]
 
     private var lastProgressByID: [String: Double] = [:]
+    private var startedAtByStableKey: [String: Date] = [:]
+    private var didBootstrapCompletionTracking = false
 
     private var session: STSessionRef?
     private var timer: Timer?
@@ -600,6 +602,8 @@ final class TorrentEngine: ObservableObject {
             TorrentStore.save(items)
         }
 
+        startedAtByStableKey[stable] = Date()
+
         var errBuf = Array<CChar>(repeating: 0, count: 512)
         let ok = trimmedMagnet.withCString { magnetC in
             savePath.withCString { pathC in
@@ -673,8 +677,10 @@ final class TorrentEngine: ObservableObject {
         ArrMetadataStore.remove(key: stable)
         AppSettings.shared.unmarkCleaned(stable)
         AppSettings.shared.unhideTorrent(stable)
+        AppSettings.shared.clearRecentCompletionMark(for: stable)
         desiredPausedKeys.remove(stable)
         queuedTorrentKeys.removeAll { $0 == stable }
+        startedAtByStableKey[stable] = nil
         savePausedKeys(desiredPausedKeys)
         PosterCache.remove(for: id)
         filesByTorrentID[id] = nil
@@ -710,10 +716,16 @@ final class TorrentEngine: ObservableObject {
         }
     }
 
-    private func categoryForTorrent(id: String) -> String? {
-        let items = TorrentStore.load()
+    private func categoryForTorrent(id: String, items: [StoredTorrent]) -> String? {
         if let exact = items.first(where: { $0.key == id }) { return exact.category }
         return items.first(where: { $0.magnet.contains(id) })?.category
+    }
+
+    private func stableKey(forLiveTorrentID id: String, items: [StoredTorrent]) -> String {
+        if let exact = items.first(where: { $0.key == id }) { return exact.key }
+        if let byMagnetKey = items.first(where: { MagnetKeyExtractor.key(from: $0.magnet) == id }) { return byMagnetKey.key }
+        if let contains = items.first(where: { $0.magnet.contains(id) }) { return contains.key }
+        return id
     }
 
     private func normalizeCategory(_ s: String?) -> String? {
@@ -726,6 +738,7 @@ final class TorrentEngine: ObservableObject {
 
     private func poll() {
         guard let s = session else { return }
+        let storedItems = TorrentStore.load()
 
         let maxItems = 200
         var raw = Array(repeating: STTorrentStatus(), count: maxItems)
@@ -761,12 +774,25 @@ final class TorrentEngine: ObservableObject {
                     state: Int(st.state),
                     isSeeding: st.is_seeding,
                     isPaused: st.is_paused,
-                    category: categoryForTorrent(id: id)
+                    category: categoryForTorrent(id: id, items: storedItems)
                 )
             )
         }
 
         torrents = rows
+
+        for row in rows {
+            let stable = stableKey(forLiveTorrentID: row.id, items: storedItems)
+            if startedAtByStableKey[stable] == nil {
+                startedAtByStableKey[stable] = Date()
+            }
+        }
+
+        if didBootstrapCompletionTracking {
+            captureRecentCompletions(previous: previous, current: rows, storedItems: storedItems)
+        } else {
+            didBootstrapCompletionTracking = true
+        }
 
         // Promote queued torrents when a download slot is free
         promoteQueuedIfNeeded()
@@ -782,6 +808,43 @@ final class TorrentEngine: ObservableObject {
         autoCleanupIfNeeded(previous: previous, current: rows)
 
         for t in rows { lastProgressByID[t.id] = t.progress }
+    }
+
+    private func captureRecentCompletions(previous: [String: TorrentRow], current: [TorrentRow], storedItems: [StoredTorrent]) {
+        for t in current {
+            let was = previous[t.id]?.progress ?? lastProgressByID[t.id] ?? 0
+            let isComplete = t.progress >= 0.999
+            guard isComplete, was < 0.999 else { continue }
+
+            let stable = stableKey(forLiveTorrentID: t.id, items: storedItems)
+            let meta = mediaByTorrentID[t.id]
+            let startedAt = startedAtByStableKey[stable]
+            let completedAt = Date()
+            let duration = startedAt.map { max(0, completedAt.timeIntervalSince($0)) }
+
+            let item = RecentDownloadItem(
+                id: UUID(),
+                torrentKey: stable,
+                torrentName: t.name,
+                title: meta?.title ?? TorrentNameParser.parse(t.name).query,
+                year: meta?.year,
+                typeRaw: {
+                    switch meta?.type {
+                    case .show:
+                        return "show"
+                    default:
+                        return "movie"
+                    }
+                }(),
+                posterLocalPath: meta?.localPosterPath?.path,
+                posterRemoteURL: meta?.posterURL?.absoluteString,
+                startedAt: startedAt,
+                completedAt: completedAt,
+                durationSeconds: duration,
+                outcome: AppSettings.shared.autoCleanupEnabled ? "Completed (cleanup queued)" : "Completed"
+            )
+            AppSettings.shared.appendRecentDownload(item)
+        }
     }
 
     private func applyDesiredPauseStateUsingStoredKeys() {

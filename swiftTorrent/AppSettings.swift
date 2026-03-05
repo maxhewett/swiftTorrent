@@ -9,6 +9,30 @@ import Foundation
 import SwiftUI
 import Combine
 
+struct RecentDownloadItem: Codable, Hashable, Identifiable {
+    let id: UUID
+    let torrentKey: String
+    let torrentName: String
+    let title: String
+    let year: Int?
+    let typeRaw: String
+    let posterLocalPath: String?
+    let posterRemoteURL: String?
+    let startedAt: Date?
+    let completedAt: Date
+    let durationSeconds: Double?
+    let outcome: String
+
+    var typeLabel: String {
+        switch typeRaw.lowercased() {
+        case "show":
+            return "TV"
+        default:
+            return "Movie"
+        }
+    }
+}
+
 struct CategoryDefinition: Codable, Hashable, Identifiable {
     let id: String
     var title: String
@@ -26,6 +50,7 @@ struct CategoryDefinition: Codable, Hashable, Identifiable {
 @MainActor
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
+    private static let maxRecentDownloads = 100
 
     private enum K {
         static let autoCleanupEnabled = "swiftTorrent.settings.autoCleanupEnabled"
@@ -40,6 +65,8 @@ final class AppSettings: ObservableObject {
         static let maxActiveDownloads = "swiftTorrent.settings.maxActiveDownloads"
         static let categoryDefinitions = "swiftTorrent.settings.categoryDefinitions"
         static let legacyCategories = "swiftTorrent.settings.categories"
+        static let recentDownloads = "swiftTorrent.settings.recentDownloads"
+        static let recentCompletionKeys = "swiftTorrent.settings.recentCompletionKeys"
     }
 
     static let defaultCategories: [CategoryDefinition] = [
@@ -109,6 +136,18 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(Array(hiddenTorrentKeys), forKey: K.hiddenKeys) }
     }
 
+    @Published private(set) var recentDownloads: [RecentDownloadItem] {
+        didSet {
+            if let data = try? JSONEncoder().encode(recentDownloads) {
+                UserDefaults.standard.set(data, forKey: K.recentDownloads)
+            }
+        }
+    }
+
+    @Published private(set) var recentCompletionKeys: Set<String> {
+        didSet { UserDefaults.standard.set(Array(recentCompletionKeys), forKey: K.recentCompletionKeys) }
+    }
+
     @Published private(set) var resolvedMoviesURL: URL?
     @Published private(set) var resolvedTVURL: URL?
     @Published private(set) var resolvedDownloadURL: URL?
@@ -129,6 +168,27 @@ final class AppSettings: ObservableObject {
         self.cleanedTorrentKeys = Set(arr)
         let hiddenArr = UserDefaults.standard.stringArray(forKey: K.hiddenKeys) ?? []
         self.hiddenTorrentKeys = Set(hiddenArr)
+        let loadedRecentDownloads: [RecentDownloadItem]
+        if let data = UserDefaults.standard.data(forKey: K.recentDownloads),
+           let decoded = try? JSONDecoder().decode([RecentDownloadItem].self, from: data) {
+            let deduped = Self.deduplicatedRecentDownloads(decoded)
+            loadedRecentDownloads = deduped
+            if deduped.count != decoded.count,
+               let encoded = try? JSONEncoder().encode(deduped) {
+                UserDefaults.standard.set(encoded, forKey: K.recentDownloads)
+            }
+        } else {
+            loadedRecentDownloads = []
+        }
+        self.recentDownloads = loadedRecentDownloads
+        let storedCompletionKeys = UserDefaults.standard.stringArray(forKey: K.recentCompletionKeys) ?? []
+        if storedCompletionKeys.isEmpty {
+            self.recentCompletionKeys = Set(loadedRecentDownloads.compactMap { item in
+                item.outcome.lowercased().contains("completed") ? item.torrentKey : nil
+            })
+        } else {
+            self.recentCompletionKeys = Set(storedCompletionKeys)
+        }
 
         self.resolvedMoviesURL = nil
         self.resolvedTVURL = nil
@@ -154,6 +214,47 @@ final class AppSettings: ObservableObject {
     func resetCleaned() {
         cleanedTorrentKeys = []
         hiddenTorrentKeys = []
+    }
+
+    func appendRecentDownload(_ item: RecentDownloadItem) {
+        if item.outcome.lowercased().contains("completed"), recentCompletionKeys.contains(item.torrentKey) {
+            return
+        }
+        if item.outcome.lowercased().contains("completed") {
+            recentCompletionKeys.insert(item.torrentKey)
+        }
+        recentDownloads.insert(item, at: 0)
+        if recentDownloads.count > Self.maxRecentDownloads {
+            recentDownloads = Array(recentDownloads.prefix(Self.maxRecentDownloads))
+        }
+    }
+
+    func clearRecentCompletionMark(for key: String) {
+        recentCompletionKeys.remove(key)
+    }
+
+    func removeRecentDownload(id: UUID) {
+        guard let index = recentDownloads.firstIndex(where: { $0.id == id }) else { return }
+        let item = recentDownloads[index]
+        recentDownloads.remove(at: index)
+        clearRecentCompletionMark(for: item.torrentKey)
+    }
+
+    private static func deduplicatedRecentDownloads(_ items: [RecentDownloadItem]) -> [RecentDownloadItem] {
+        var seenCompleted: Set<String> = []
+        var deduped: [RecentDownloadItem] = []
+        deduped.reserveCapacity(min(items.count, Self.maxRecentDownloads))
+
+        for item in items {
+            let isCompletedOutcome = item.outcome.lowercased().contains("completed")
+            if isCompletedOutcome {
+                if seenCompleted.contains(item.torrentKey) { continue }
+                seenCompleted.insert(item.torrentKey)
+            }
+            deduped.append(item)
+            if deduped.count == Self.maxRecentDownloads { break }
+        }
+        return deduped
     }
 
     func addCategory(id: String, title: String, symbol: String) {

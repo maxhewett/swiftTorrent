@@ -59,6 +59,13 @@ swiftTorrent is a macOS torrent app focused on movie and TV workflows, with a Sw
 - [`TorrentCore/`](/Users/max/Developer/swiftTorrent/TorrentCore) - Native bridge framework for torrent engine integration.
 - [`Frameworks/`](/Users/max/Developer/swiftTorrent/Frameworks) - Bundled third-party native libraries and headers.
 
+## Sparkle Channels
+
+- Stable appcast: `https://maxhewett.github.io/swiftTorrent/appcast.xml`
+- Beta appcast: `https://maxhewett.github.io/swiftTorrent/beta/appcast.xml`
+- In-app opt-in: `Settings > General > Updates > Update Channel`
+- Publish beta release/appcast: `scripts/publish_sparkle_release.sh <version> <app-or-zip> [notes] --channel beta`
+
 ## License
 
 Licensed under the [GNU GPL v3.0](/Users/max/Developer/swiftTorrent/LICENSE).
