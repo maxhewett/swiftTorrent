@@ -335,6 +335,12 @@ final class LocalWebServer {
         )
 
         ArrMetadataStore.upsert(hint)
+        if let mediaType = hint.mediaType {
+            TorrentStore.assignCategoryIfMissing(
+                key: key,
+                category: mediaType == .show ? "tv" : "movie"
+            )
+        }
 
         if let engine {
             let matchingIDs = engine.torrents

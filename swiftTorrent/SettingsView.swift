@@ -47,8 +47,13 @@ private struct GeneralSettingsTab: View {
                 title: "Behaviour",
                 subtitle: "Choose what swiftTorrent does automatically while downloads finish and move around the app."
             ) {
-                Toggle("Auto-cleanup when download completes", isOn: $settings.autoCleanupEnabled)
-                    .help("Automatically move completed downloads to their destination folders.")
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Auto-cleanup when download completes", isOn: $settings.autoCleanupEnabled)
+                        .help("Automatically move completed downloads to their destination folders.")
+
+                    Toggle("Filter non-media files automatically", isOn: $settings.autoFilterNonMediaFiles)
+                        .help("Marks non-media files like exe, iso, and other junk as unwanted while still allowing video and subtitle files such as mkv, mp4, m4v, and srt.")
+                }
             }
 
             SettingsCard(

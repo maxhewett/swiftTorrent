@@ -35,6 +35,9 @@ struct TorrentFile: Identifiable, Hashable {
     let path: String
     let size: Int64
     let done: Int64
+    let isWanted: Bool
+
+    var isSkipped: Bool { !isWanted }
 
     var progress: Double {
         guard size > 0 else { return 0 }
@@ -84,6 +87,7 @@ final class TorrentEngine: ObservableObject {
     private var queuedTorrentKeys: [String] = []
     // Newly added torrents that should be resumed once they appear with a live ID.
     private var pendingAutoResumeKeys: Set<String> = []
+    private var fileFilterAppliedKeys: Set<String> = []
 
     // MARK: - Pause persistence (by STORED torrent key)
     private let pausedKeysDefaultsKey = "swiftTorrent.pausedTorrentKeys"
@@ -190,14 +194,54 @@ final class TorrentEngine: ObservableObject {
             var cPath: UnsafePointer<CChar>?
             var size: Int64 = 0
             var done: Int64 = 0
+            var wanted = true
 
-            let ok = st_get_torrent_file_info(session, Int32(idx), Int32(i), &cPath, &size, &done)
+            let ok = st_get_torrent_file_info(session, Int32(idx), Int32(i), &cPath, &size, &done, &wanted)
             if ok, let cPath {
-                out.append(TorrentFile(id: i, path: String(cString: cPath), size: size, done: done))
+                out.append(TorrentFile(id: i, path: String(cString: cPath), size: size, done: done, isWanted: wanted))
             }
         }
 
         filesByTorrentID[torrentID] = out
+    }
+
+    private func applyAutomaticFileFilterIfNeeded(current: [TorrentRow], storedItems: [StoredTorrent]) {
+        guard AppSettings.shared.autoFilterNonMediaFiles, let session else { return }
+
+        for row in current {
+            let stable = stableKey(forLiveTorrentID: row.id, items: storedItems)
+            guard !fileFilterAppliedKeys.contains(stable) else { continue }
+
+            let count = Int(st_get_torrent_file_count(session, Int32(row.coreIndex)))
+            guard count > 0 else { continue }
+
+            var filteredAny = false
+            var sawAnyFile = false
+
+            for index in 0..<count {
+                var cPath: UnsafePointer<CChar>?
+                var size: Int64 = 0
+                var done: Int64 = 0
+                var wanted = true
+                guard st_get_torrent_file_info(session, Int32(row.coreIndex), Int32(index), &cPath, &size, &done, &wanted),
+                      let cPath else { continue }
+
+                sawAnyFile = true
+                let path = String(cString: cPath)
+                if wanted && !MediaFileFilter.shouldAllow(path: path) {
+                    _ = row.id.withCString { torrentID in
+                        st_torrent_set_file_wanted(session, torrentID, Int32(index), false)
+                    }
+                    filteredAny = true
+                }
+            }
+
+            guard sawAnyFile else { continue }
+            fileFilterAppliedKeys.insert(stable)
+            if filteredAny, filesByTorrentID[row.id] != nil {
+                refreshFiles(for: row.id)
+            }
+        }
     }
 
     // MARK: - Media enrichment (unchanged)
@@ -379,12 +423,24 @@ final class TorrentEngine: ObservableObject {
         }
     }
 
-    private func scoreMovie(_ item: TraktClient.SearchResult.Movie, query: String, year: Int?) -> Int {
-        scoreTitle(item.title, query: query, year: year, candidateYear: item.year)
+    private func scoreMovie(_ item: TraktClient.SearchResult.Movie, query: String, year: Int?, identifierHint: ArrMetadataHint? = nil) -> Int {
+        scoreTitle(item.title, query: query, year: year, candidateYear: item.year) + identifierMatchScore(
+            traktID: item.ids.trakt,
+            tmdbID: item.ids.tmdb,
+            imdbID: item.ids.imdb,
+            tvdbID: item.ids.tvdb,
+            hint: identifierHint
+        )
     }
 
-    private func scoreShow(_ item: TraktClient.SearchResult.Show, query: String, year: Int?) -> Int {
-        scoreTitle(item.title, query: query, year: year, candidateYear: item.year)
+    private func scoreShow(_ item: TraktClient.SearchResult.Show, query: String, year: Int?, identifierHint: ArrMetadataHint? = nil) -> Int {
+        scoreTitle(item.title, query: query, year: year, candidateYear: item.year) + identifierMatchScore(
+            traktID: item.ids.trakt,
+            tmdbID: item.ids.tmdb,
+            imdbID: item.ids.imdb,
+            tvdbID: item.ids.tvdb,
+            hint: identifierHint
+        )
     }
 
     private func scoreTitle(_ title: String, query: String, year: Int?, candidateYear: Int?) -> Int {
@@ -408,6 +464,45 @@ final class TorrentEngine: ObservableObject {
 
         if normalizedTitle.count < normalizedQuery.count / 2 { score -= 20 }
         return score
+    }
+
+    private func identifierMatchScore(traktID: Int?, tmdbID: Int?, imdbID: String?, tvdbID: Int?, hint: ArrMetadataHint?) -> Int {
+        guard let hint else { return 0 }
+
+        var score = 0
+        if let hintedTMDB = hint.tmdbID, let tmdbID, hintedTMDB == tmdbID { score += 250 }
+        if let hintedTVDB = hint.tvdbID, let tvdbID, hintedTVDB == tvdbID { score += 250 }
+        if let hintedIMDB = normalizedIMDBID(hint.imdbID),
+           let imdbID = normalizedIMDBID(imdbID),
+           hintedIMDB == imdbID {
+            score += 250
+        }
+        if let hintedTrakt = extractTraktID(from: hint.key), let traktID, hintedTrakt == traktID {
+            score += 250
+        }
+        return score
+    }
+
+    private func normalizedIMDBID(_ value: String?) -> String? {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func extractTraktID(from key: String) -> Int? {
+        Int(key.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private func candidateMatchesIdentifier(_ candidate: MetadataCandidate, hint: ArrMetadataHint) -> Bool {
+        if let hintedTMDB = hint.tmdbID, let candidateTMDB = candidate.tmdbID, hintedTMDB == candidateTMDB { return true }
+        if let hintedTVDB = hint.tvdbID, let candidateTVDB = candidate.tvdbID, hintedTVDB == candidateTVDB { return true }
+        if let hintedIMDB = normalizedIMDBID(hint.imdbID),
+           let candidateIMDB = normalizedIMDBID(candidate.imdbID),
+           hintedIMDB == candidateIMDB {
+            return true
+        }
+        if let hintedTrakt = extractTraktID(from: hint.key), let candidateTrakt = candidate.traktID, hintedTrakt == candidateTrakt {
+            return true
+        }
+        return false
     }
 
     private func normalizeLookupText(_ text: String) -> String {
@@ -480,7 +575,14 @@ final class TorrentEngine: ObservableObject {
         var overview: String?
         var posterURL: URL?
 
-        if let fallback = try await resolvedMetadataCandidates(query: hint.title, year: hint.year, preferredType: type).first {
+        let candidates = try await resolvedMetadataCandidates(
+            query: hint.title,
+            year: hint.year,
+            preferredType: type,
+            identifierHint: hint
+        )
+
+        if let fallback = candidates.first(where: { candidateMatchesIdentifier($0, hint: hint) }) ?? candidates.first {
             traktID = fallback.traktID
             if tmdbID == nil { tmdbID = fallback.tmdbID }
             if imdbID == nil { imdbID = fallback.imdbID }
@@ -506,7 +608,7 @@ final class TorrentEngine: ObservableObject {
         )
     }
 
-    private func resolvedMetadataCandidates(query: String, year: Int?, preferredType: MediaMetadata.MediaType?) async throws -> [MetadataCandidate] {
+    private func resolvedMetadataCandidates(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, identifierHint: ArrMetadataHint? = nil) async throws -> [MetadataCandidate] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let trakt = TraktClient(clientID: "eb92f2cb922619e94a4ca0adcfd9572fc0397acb18a33cb6e65b7f2219983d9e")
         var candidates: [MetadataCandidate] = []
@@ -517,7 +619,7 @@ final class TorrentEngine: ObservableObject {
             let slugMatches = try await slugMovieMatches(trakt: trakt, query: trimmed, year: year)
             let merged = mergeMovies(exact + fallback + slugMatches)
             candidates.append(contentsOf: merged.map {
-                MetadataCandidate(id: "movie-\($0.ids.trakt ?? -1)-\($0.ids.tmdb ?? -1)-\($0.title)-\($0.year ?? -1)", title: $0.title, year: $0.year, type: .movie, overview: $0.overview, score: scoreMovie($0, query: trimmed, year: year), traktID: $0.ids.trakt, tmdbID: $0.ids.tmdb, imdbID: $0.ids.imdb, tvdbID: $0.ids.tvdb, posterURL: nil)
+                MetadataCandidate(id: "movie-\($0.ids.trakt ?? -1)-\($0.ids.tmdb ?? -1)-\($0.title)-\($0.year ?? -1)", title: $0.title, year: $0.year, type: .movie, overview: $0.overview, score: scoreMovie($0, query: trimmed, year: year, identifierHint: identifierHint), traktID: $0.ids.trakt, tmdbID: $0.ids.tmdb, imdbID: $0.ids.imdb, tvdbID: $0.ids.tvdb, posterURL: nil)
             })
         }
 
@@ -527,7 +629,7 @@ final class TorrentEngine: ObservableObject {
             let slugMatches = try await slugShowMatches(trakt: trakt, query: trimmed, year: year)
             let merged = mergeShows(exact + fallback + slugMatches)
             candidates.append(contentsOf: merged.map {
-                MetadataCandidate(id: "show-\($0.ids.trakt ?? -1)-\($0.ids.tmdb ?? -1)-\($0.title)-\($0.year ?? -1)", title: $0.title, year: $0.year, type: .show, overview: $0.overview, score: scoreShow($0, query: trimmed, year: year), traktID: $0.ids.trakt, tmdbID: $0.ids.tmdb, imdbID: $0.ids.imdb, tvdbID: $0.ids.tvdb, posterURL: nil)
+                MetadataCandidate(id: "show-\($0.ids.trakt ?? -1)-\($0.ids.tmdb ?? -1)-\($0.title)-\($0.year ?? -1)", title: $0.title, year: $0.year, type: .show, overview: $0.overview, score: scoreShow($0, query: trimmed, year: year, identifierHint: identifierHint), traktID: $0.ids.trakt, tmdbID: $0.ids.tmdb, imdbID: $0.ids.imdb, tvdbID: $0.ids.tvdb, posterURL: nil)
             })
         }
 
@@ -690,7 +792,16 @@ final class TorrentEngine: ObservableObject {
         mediaByTorrentID[id] = nil
         metadataLookupStateByID[id] = nil
         lastProgressByID[id] = nil
+        fileFilterAppliedKeys.remove(stable)
 
+        poll()
+    }
+
+    func setFileWanted(_ wanted: Bool, torrentID: String, fileID: Int) {
+        guard let session else { return }
+        _ = torrentID.withCString { st_torrent_set_file_wanted(session, $0, Int32(fileID), wanted) }
+        fileFilterAppliedKeys.insert(stableKey(forLiveTorrentID: torrentID))
+        refreshFiles(for: torrentID)
         poll()
     }
 
@@ -798,6 +909,7 @@ final class TorrentEngine: ObservableObject {
         }
 
         applyPendingAutoResumes(current: rows, storedItems: storedItems)
+        applyAutomaticFileFilterIfNeeded(current: rows, storedItems: storedItems)
 
         // Promote queued torrents when a download slot is free
         promoteQueuedIfNeeded()

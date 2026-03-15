@@ -514,7 +514,7 @@ private final class RecentDownloadsPanelController {
 
         let panel = InteractiveRecentPanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: 680),
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -523,7 +523,7 @@ private final class RecentDownloadsPanelController {
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
-        panel.becomesKeyOnlyIfNeeded = false
+        panel.becomesKeyOnlyIfNeeded = true
         panel.ignoresMouseEvents = false
         panel.acceptsMouseMovedEvents = true
         panel.backgroundColor = .clear
@@ -551,8 +551,9 @@ private final class RecentDownloadsPanelController {
 }
 
 private final class InteractiveRecentPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+    override var acceptsFirstResponder: Bool { false }
 }
 
 private struct RecentDownloadsPanelView: View {
@@ -606,9 +607,11 @@ private struct RecentDownloadsPanelView: View {
                     .padding(.horizontal, 8)
                     .padding(.bottom, 10)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .scrollClipDisabled()
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(.thinMaterial)
         .overlay(
             LinearGradient(

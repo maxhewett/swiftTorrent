@@ -175,6 +175,15 @@ struct TorrentInspectorView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+
+                            if skippedFilesCount > 0 {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "line.3.horizontal.decrease.circle")
+                                    Text("\(skippedFilesCount) skipped \(skippedFilesCount == 1 ? "file" : "files")")
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
                         }
                         .frame(maxWidth: .infinity, maxHeight: 260, alignment: .topLeading)
                         .clipped()
@@ -198,6 +207,10 @@ struct TorrentInspectorView: View {
         engine.filesByTorrentID[torrent.id] ?? []
     }
 
+    private var skippedFilesCount: Int {
+        files.filter(\.isSkipped).count
+    }
+
     private var categoryOptions: [CategoryDefinition] {
         let merged = settings.categoryDefinitionsForUI + extraCategoryDefinition
         var seen: Set<String> = []
@@ -216,34 +229,65 @@ struct TorrentInspectorView: View {
         let parentPath = pathURL.deletingLastPathComponent().path
         let showParent = parentPath != "." && parentPath != "/"
 
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(filename)
-                .font(.body)
-                .lineLimit(1)
-
-            if showParent {
-                Text(parentPath)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            if file.progress >= 0.999 {
+        return HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
+                    Text(filename)
+                        .font(.body)
+                        .lineLimit(1)
+
+                    if file.isSkipped {
+                        Text("Skipped")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.12), in: Capsule())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if showParent {
+                    Text(parentPath)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("Download complete")
+                        .lineLimit(1)
+                }
+
+                if file.isSkipped {
+                    Text("\(formatBytes(file.size)) excluded from download")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if file.progress >= 0.999 {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                        Text("Download complete")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
+                } else {
+                    ProgressView(value: file.progress)
+                        .animation(nil, value: file.progress)
+
+                    Text("\(formatBytes(file.done)) / \(formatBytes(file.size))")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .font(.caption)
-            } else {
-                ProgressView(value: file.progress)
-                    .animation(nil, value: file.progress)
-
-                Text("\(formatBytes(file.done)) / \(formatBytes(file.size))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
+
+            Spacer(minLength: 8)
+
+            VStack(spacing: 6) {
+                Button {
+                    engine.setFileWanted(file.isSkipped, torrentID: torrent.id, fileID: file.id)
+                } label: {
+                    Image(systemName: file.isSkipped ? "arrow.down.circle" : "slash.circle")
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .buttonStyle(.plain)
+                .help(file.isSkipped ? "Include this file in the download" : "Skip this file")
+            }
+            .padding(.top, 2)
         }
     }
 

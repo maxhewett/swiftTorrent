@@ -9,6 +9,21 @@ import Foundation
 import SwiftUI
 import Combine
 
+enum MediaFileFilter {
+    static let allowedExtensions: Set<String> = [
+        "3gp", "3g2", "asf", "ass", "avi", "divx", "flac", "flv", "idx", "m2ts",
+        "m4a", "m4b", "m4p", "m4r", "m4v", "mka", "mkv", "mov", "mp3", "mp4",
+        "mpeg", "mpg", "nfo", "oga", "ogg", "ogm", "ogv", "opus", "smi", "srt", "ssa",
+        "sub", "sup", "ts", "vob", "vtt", "wav", "webm", "wma", "wmv"
+    ]
+
+    static func shouldAllow(path: String) -> Bool {
+        let ext = URL(fileURLWithPath: path).pathExtension.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !ext.isEmpty else { return false }
+        return allowedExtensions.contains(ext)
+    }
+}
+
 struct RecentDownloadItem: Codable, Hashable, Identifiable {
     let id: UUID
     let torrentKey: String
@@ -63,6 +78,7 @@ final class AppSettings: ObservableObject {
         static let rpcUsername = "swiftTorrent.settings.rpcUsername"
         static let rpcPassword = "swiftTorrent.settings.rpcPassword"
         static let maxActiveDownloads = "swiftTorrent.settings.maxActiveDownloads"
+        static let autoFilterNonMediaFiles = "swiftTorrent.settings.autoFilterNonMediaFiles"
         static let categoryDefinitions = "swiftTorrent.settings.categoryDefinitions"
         static let legacyCategories = "swiftTorrent.settings.categories"
         static let recentDownloads = "swiftTorrent.settings.recentDownloads"
@@ -106,6 +122,10 @@ final class AppSettings: ObservableObject {
 
     @Published var maxActiveDownloads: Int = 5 {
         didSet { UserDefaults.standard.set(maxActiveDownloads, forKey: K.maxActiveDownloads) }
+    }
+
+    @Published var autoFilterNonMediaFiles: Bool = true {
+        didSet { UserDefaults.standard.set(autoFilterNonMediaFiles, forKey: K.autoFilterNonMediaFiles) }
     }
 
     @Published var categoryDefinitions: [CategoryDefinition] = [] {
@@ -201,6 +221,11 @@ final class AppSettings: ObservableObject {
 
         let storedMax = UserDefaults.standard.integer(forKey: K.maxActiveDownloads)
         self.maxActiveDownloads = storedMax > 0 ? storedMax : 5
+        if UserDefaults.standard.object(forKey: K.autoFilterNonMediaFiles) == nil {
+            self.autoFilterNonMediaFiles = true
+        } else {
+            self.autoFilterNonMediaFiles = UserDefaults.standard.bool(forKey: K.autoFilterNonMediaFiles)
+        }
         self.categoryDefinitions = Self.loadCategoryDefinitions()
 
         refreshResolvedURLs()

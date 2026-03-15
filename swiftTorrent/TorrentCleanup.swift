@@ -52,6 +52,7 @@ enum TorrentCleanup {
         let rels = filePaths
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+            .filter { !AppSettings.shared.autoFilterNonMediaFiles || MediaFileFilter.shouldAllow(path: $0) }
 
         guard !rels.isEmpty else { throw CleanupError.noFiles }
 
@@ -64,7 +65,7 @@ enum TorrentCleanup {
             destBase = settings.tvRoot
         }
 
-        let titleFolder = sanitizedTitleFolder(meta: meta) // "Friends (1994)" etc.
+        let titleFolder = sanitizedTitleFolder(meta: meta)
         var dest = destBase.appendingPathComponent(titleFolder, isDirectory: true)
 
         if meta.type == .show, let season = parsedSeason {
@@ -131,7 +132,7 @@ enum TorrentCleanup {
 
     private static func sanitizedTitleFolder(meta: MediaMetadata) -> String {
         let base = meta.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let y = meta.year {
+        if meta.type == .movie, let y = meta.year {
             return sanitizeFilename("\(base) (\(y))")
         }
         return sanitizeFilename(base)

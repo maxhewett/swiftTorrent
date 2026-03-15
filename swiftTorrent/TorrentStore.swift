@@ -128,6 +128,17 @@ enum TorrentStore {
         save(items)
     }
 
+    static func assignCategoryIfMissing(key: String, category: String?) {
+        guard let category else { return }
+        var items = load()
+        guard let idx = items.firstIndex(where: {
+            $0.key == key || MagnetKeyExtractor.key(from: $0.magnet) == key || $0.magnet.contains(key)
+        }) else { return }
+        guard items[idx].category?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return }
+        items[idx].category = category
+        save(items)
+    }
+
     static func storeURL() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = appSupport.appendingPathComponent("swiftTorrent", isDirectory: true)
