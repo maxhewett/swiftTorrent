@@ -294,9 +294,9 @@ struct ContentView: View {
         }
 
         return (
-            tv.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending },
-            movies.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending },
-            other.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            sortTorrents(tv),
+            sortTorrents(movies),
+            sortTorrents(other)
         )
     }
 
@@ -310,6 +310,26 @@ struct ContentView: View {
 
     private func normalizeCategory(_ s: String?) -> String {
         (s ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func sortTorrents(_ torrents: [TorrentRow]) -> [TorrentRow] {
+        torrents.sorted { lhs, rhs in
+            let lhsRank = statusSortRank(lhs)
+            let rhsRank = statusSortRank(rhs)
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+
+            if lhs.progress != rhs.progress { return lhs.progress > rhs.progress }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+    private func statusSortRank(_ torrent: TorrentRow) -> Int {
+        if engine.isQueued(torrentID: torrent.id) { return 1 }
+        if !torrent.isPaused && !torrent.isSeeding && torrent.progress < 0.999 { return 0 }
+        if torrent.isPaused { return 2 }
+        if torrent.isSeeding { return 3 }
+        if torrent.progress >= 0.999 { return 4 }
+        return 5
     }
 
     private var sidebarPane: some View {
@@ -514,7 +534,7 @@ private final class RecentDownloadsPanelController {
 
         let panel = InteractiveRecentPanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: 680),
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
@@ -523,7 +543,7 @@ private final class RecentDownloadsPanelController {
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
-        panel.becomesKeyOnlyIfNeeded = true
+        panel.becomesKeyOnlyIfNeeded = false
         panel.ignoresMouseEvents = false
         panel.acceptsMouseMovedEvents = true
         panel.backgroundColor = .clear
@@ -531,7 +551,7 @@ private final class RecentDownloadsPanelController {
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
-        panel.contentView = NSHostingView(rootView: RecentDownloadsPanelView())
+        panel.contentView = FocuslessHostingView(rootView: RecentDownloadsPanelView())
         self.panel = panel
         return panel
     }
@@ -551,9 +571,16 @@ private final class RecentDownloadsPanelController {
 }
 
 private final class InteractiveRecentPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+}
+
+private final class FocuslessHostingView<Content: View>: NSHostingView<Content> {
     override var acceptsFirstResponder: Bool { false }
+    override var focusRingType: NSFocusRingType {
+        get { .none }
+        set { }
+    }
 }
 
 private struct RecentDownloadsPanelView: View {

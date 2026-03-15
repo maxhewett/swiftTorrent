@@ -140,6 +140,10 @@ struct TorrentListRow: View {
     }
 
     private var statusLineText: String? {
+        if engine.isQueued(torrentID: t.id) {
+            return "Paused - Queued • \(percentString)"
+        }
+
         if t.isPaused {
             return "Paused • \(percentString)"
         }

@@ -94,6 +94,10 @@ final class TorrentEngine: ObservableObject {
     private var desiredPausedKeys: Set<String> = []
     private var didApplyDesiredPauseState = false
 
+    func isQueued(torrentID: String) -> Bool {
+        queuedTorrentKeys.contains(stableKey(forLiveTorrentID: torrentID))
+    }
+
     init() {
         session = st_session_create(6881, 6891)
 
@@ -766,6 +770,7 @@ final class TorrentEngine: ObservableObject {
         _ = id.withCString { st_torrent_resume(s, $0) }
 
         let stable = stableKey(forLiveTorrentID: id)
+        queuedTorrentKeys.removeAll { $0 == stable }
         desiredPausedKeys.remove(stable)
         savePausedKeys(desiredPausedKeys)
 
