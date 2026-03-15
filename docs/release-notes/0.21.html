@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>v0.21 - Release Notes</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      padding: 32px 20px 48px;
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f6f8;
+      color: #0f1720;
+    }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 28px;
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.86);
+      box-shadow: 0 20px 60px rgba(15, 23, 32, 0.10);
+    }
+    h1 { margin: 0 0 6px; font-size: 30px; line-height: 1.15; }
+    .meta { margin: 0 0 24px; color: #52606d; font-size: 14px; }
+    p { margin: 0 0 16px; }
+    a { color: #0a67a3; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #0b1015; color: #edf2f7; }
+      main {
+        background: rgba(15, 23, 32, 0.88);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+      }
+      .meta { color: #9fb0c2; }
+      a { color: #73c3ff; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>v0.21</h1>
+    <p class="meta">Version 0.21</p>
+    <p>v0.21</p>
+<p>Improved Sonarr/Radarr matching by preferring ARR-provided IDs and metadata over fuzzy torrent-name matching.<br>Fixed TV cleanup paths so shows no longer create duplicate series folders with year suffixes.<br>Added automatic non-media file filtering to skip junk like .exe and .iso while keeping media and subtitles.<br>Added .nfo to the allowed file types.<br>Added per-file include/skip controls in the files inspector.<br>Added Skipped badges and a skipped-files summary in the files list.<br>Fixed recent downloads so the panel is scrollable.<br>Removed the odd black focus outline from the recent downloads panel.</p>
+    <p><strong>Commit:</strong> <a href="https://github.com/maxhewett/swiftTorrent/commit/130df769dbee1bfda5b72bdcaad577a37a313fb0">130df76</a></p>
+  </main>
+</body>
+</html>
