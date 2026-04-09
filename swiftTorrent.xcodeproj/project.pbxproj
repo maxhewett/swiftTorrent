@@ -76357,7 +76357,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\n\n# Keep local Debug builds debugger-friendly.\nif [[ \"${CONFIGURATION}\" != \"Release\" ]]; then\n  exit 0\nfi\n\nAPP=\"${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}\"\nEXE=\"${APP}/Contents/MacOS/${EXECUTABLE_NAME}\"\nFW_DIR=\"${APP}/Contents/Frameworks\"\n\n# Paths inside the built app\nCORE=\"${FW_DIR}/TorrentCore.framework/Versions/A/TorrentCore\"\n\n# Adjust if your bundled libtorrent file name differs\nLT=\"${FW_DIR}/libtorrent-rasterbar.2.0.11.dylib\"\n\npatch_bin() {\n  local BIN=\"$1\"\n  [ -f \"$BIN\" ] || return 0\n\n  install_name_tool \\\n    -change /opt/homebrew/opt/libtorrent-rasterbar/lib/libtorrent-rasterbar.2.0.dylib \\\n            @rpath/libtorrent-rasterbar.2.0.11.dylib \\\n    -change /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib \\\n            @rpath/libcrypto.3.dylib \\\n    -change /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib \\\n            @rpath/libssl.3.dylib \\\n    -change /opt/homebrew/opt/boost/lib/libboost_filesystem.dylib \\\n            @rpath/libboost_filesystem.dylib \\\n    -change /opt/homebrew/opt/boost/lib/libboost_atomic.dylib \\\n            @rpath/libboost_atomic.dylib \\\n    \"$BIN\" || true\n}\n\npatch_bin \"$EXE\"\npatch_bin \"$CORE\"\npatch_bin \"$LT\"\n\n# Re-sign the app after patching\nSIGN_ID=\"${EXPANDED_CODE_SIGN_IDENTITY:-\"-\"}\"\ncodesign --force --deep --options runtime --sign \"$SIGN_ID\" \"$APP\"\n";
+			shellScript = "set -euo pipefail\n\nAPP=\"${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}\"\nEXE=\"${APP}/Contents/MacOS/${EXECUTABLE_NAME}\"\nAPP_DEBUG_DYLIB=\"${APP}/Contents/MacOS/${PRODUCT_NAME}.debug.dylib\"\nFW_DIR=\"${APP}/Contents/Frameworks\"\nCORE=\"${FW_DIR}/TorrentCore.framework/Versions/A/TorrentCore\"\nLT=\"${FW_DIR}/libtorrent-rasterbar.2.0.11.dylib\"\n\npatch_one() {\n  local BIN=\"$1\"\n  local OLD=\"$2\"\n  local NEW=\"$3\"\n  [ -f \"$BIN\" ] || return 0\n  /usr/bin/install_name_tool -change \"$OLD\" \"$NEW\" \"$BIN\" 2>/dev/null || true\n}\n\npatch_any_absolute_dep() {\n  local BIN=\"$1\"\n  local BASE=\"$2\"\n  [ -f \"$BIN\" ] || return 0\n  local TARGET=\"@rpath/${BASE}\"\n  for DEP in $(/usr/bin/otool -L \"$BIN\" | /usr/bin/awk -v base=\"$BASE\" '$1 ~ (\"/\" base \"$\") { print $1 }'); do\n    [ \"$DEP\" = \"$TARGET\" ] && continue\n    /usr/bin/install_name_tool -change \"$DEP\" \"$TARGET\" \"$BIN\" 2>/dev/null || true\n  done\n}\n\npatch_bin() {\n  local BIN=\"$1\"\n  [ -f \"$BIN\" ] || return 0\n  echo \"[dylib-fix] Patching $BIN\"\n\n  patch_one \"$BIN\" \"/opt/homebrew/opt/libtorrent-rasterbar/lib/libtorrent-rasterbar.2.0.dylib\" \"@rpath/libtorrent-rasterbar.2.0.11.dylib\"\n  patch_one \"$BIN\" \"/opt/homebrew/opt/libtorrent-rasterbar/lib/libtorrent-rasterbar.2.0.11.dylib\" \"@rpath/libtorrent-rasterbar.2.0.11.dylib\"\n  patch_one \"$BIN\" \"/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib\" \"@rpath/libcrypto.3.dylib\"\n  patch_one \"$BIN\" \"/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib\" \"@rpath/libssl.3.dylib\"\n  patch_one \"$BIN\" \"/opt/homebrew/opt/boost/lib/libboost_filesystem.dylib\" \"@rpath/libboost_filesystem.dylib\"\n  patch_one \"$BIN\" \"/opt/homebrew/opt/boost/lib/libboost_atomic.dylib\" \"@rpath/libboost_atomic.dylib\"\n\n  patch_any_absolute_dep \"$BIN\" \"libcrypto.3.dylib\"\n  patch_any_absolute_dep \"$BIN\" \"libssl.3.dylib\"\n  patch_any_absolute_dep \"$BIN\" \"libtorrent-rasterbar.2.0.11.dylib\"\n  patch_any_absolute_dep \"$BIN\" \"libboost_filesystem.dylib\"\n  patch_any_absolute_dep \"$BIN\" \"libboost_atomic.dylib\"\n}\n\npatch_bin \"$EXE\"\npatch_bin \"$APP_DEBUG_DYLIB\"\npatch_bin \"$CORE\"\npatch_bin \"$LT\"\npatch_bin \"${FW_DIR}/libcrypto.3.dylib\"\npatch_bin \"${FW_DIR}/libssl.3.dylib\"\n\nfor dylib in \"$FW_DIR\"/*.dylib; do\n  [ -f \"$dylib\" ] || continue\n  /usr/bin/install_name_tool -id \"@rpath/$(basename \"$dylib\")\" \"$dylib\" 2>/dev/null || true\ndone\n\nSIGN_ID=\"${EXPANDED_CODE_SIGN_IDENTITY:-\"-\"}\"\n/usr/bin/codesign --force --deep --sign \"$SIGN_ID\" \"$APP\" 2>/dev/null || true\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -76517,7 +76517,7 @@
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 023;
+				CURRENT_PROJECT_VERSION = 024;
 				DEVELOPMENT_TEAM = FHXMYC956U;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
@@ -76543,7 +76543,7 @@
 					"$(PROJECT_DIR)/Frameworks/Headers",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.23;
+				MARKETING_VERSION = 0.24;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.swiftTorrent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -76575,7 +76575,7 @@
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 023;
+				CURRENT_PROJECT_VERSION = 024;
 				DEVELOPMENT_TEAM = FHXMYC956U;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -76601,7 +76601,7 @@
 					"$(PROJECT_DIR)/Frameworks/Headers",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.23;
+				MARKETING_VERSION = 0.24;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.swiftTorrent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

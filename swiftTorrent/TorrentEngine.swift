@@ -272,7 +272,7 @@ final class TorrentEngine: ObservableObject {
 
         Task {
             do {
-                var meta = try await resolvedMetadata(
+                let meta = try await resolvedMetadata(
                     query: query,
                     year: year,
                     preferredType: typeHint,
@@ -481,7 +481,7 @@ final class TorrentEngine: ObservableObject {
            hintedIMDB == imdbID {
             score += 250
         }
-        if let hintedTrakt = extractTraktID(from: hint.key), let traktID, hintedTrakt == traktID {
+        if let hintedTrakt = hint.traktID, let traktID, hintedTrakt == traktID {
             score += 250
         }
         return score
@@ -489,10 +489,6 @@ final class TorrentEngine: ObservableObject {
 
     private func normalizedIMDBID(_ value: String?) -> String? {
         value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
-    private func extractTraktID(from key: String) -> Int? {
-        Int(key.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private func candidateMatchesIdentifier(_ candidate: MetadataCandidate, hint: ArrMetadataHint) -> Bool {
@@ -503,10 +499,17 @@ final class TorrentEngine: ObservableObject {
            hintedIMDB == candidateIMDB {
             return true
         }
-        if let hintedTrakt = extractTraktID(from: hint.key), let candidateTrakt = candidate.traktID, hintedTrakt == candidateTrakt {
+        if let hintedTrakt = hint.traktID, let candidateTrakt = candidate.traktID, hintedTrakt == candidateTrakt {
             return true
         }
         return false
+    }
+
+    private func hasARRIdentifier(_ hint: ArrMetadataHint) -> Bool {
+        hint.tmdbID != nil ||
+        hint.tvdbID != nil ||
+        normalizedIMDBID(hint.imdbID) != nil ||
+        hint.traktID != nil
     }
 
     private func normalizeLookupText(_ text: String) -> String {
@@ -570,14 +573,30 @@ final class TorrentEngine: ObservableObject {
     private func resolvedArrMetadata(_ hint: ArrMetadataHint, displaySuffix: String?) async throws -> MediaMetadata? {
         guard let type = hint.mediaType else { return nil }
 
-        var title = hint.title
-        var year = hint.year
-        var traktID: Int?
+        let title = hint.title
+        let year = hint.year
+        var traktID: Int? = hint.traktID
         var tmdbID = hint.tmdbID
         var imdbID = hint.imdbID
         var tvdbID = hint.tvdbID
         var overview: String?
         var posterURL: URL?
+
+        guard hasARRIdentifier(hint) else {
+            return MediaMetadata(
+                type: type,
+                title: title,
+                year: year,
+                traktID: traktID,
+                tmdbID: tmdbID,
+                imdbID: imdbID,
+                tvdbID: tvdbID,
+                overview: nil,
+                posterURL: nil,
+                localPosterPath: nil,
+                displaySuffix: displaySuffix
+            )
+        }
 
         let candidates = try await resolvedMetadataCandidates(
             query: hint.title,
@@ -586,15 +605,13 @@ final class TorrentEngine: ObservableObject {
             identifierHint: hint
         )
 
-        if let fallback = candidates.first(where: { candidateMatchesIdentifier($0, hint: hint) }) ?? candidates.first {
-            traktID = fallback.traktID
+        if let fallback = candidates.first(where: { candidateMatchesIdentifier($0, hint: hint) }) {
+            if traktID == nil { traktID = fallback.traktID }
             if tmdbID == nil { tmdbID = fallback.tmdbID }
             if imdbID == nil { imdbID = fallback.imdbID }
             if tvdbID == nil { tvdbID = fallback.tvdbID }
             if overview == nil { overview = fallback.overview }
             if posterURL == nil { posterURL = fallback.posterURL }
-            if title.isEmpty { title = fallback.title }
-            if year == nil { year = fallback.year }
         }
 
         return MediaMetadata(

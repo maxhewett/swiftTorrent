@@ -199,7 +199,7 @@ final class TransmissionRPC {
         }
 
         // Helpful debug
-        print("[RPC] torrent-add args:", args.keys.sorted())
+        RunDiagnostics.shared.log("[RPC] torrent-add args: \(args.keys.sorted())")
 
         // Transmission: may send either `download-dir` OR rely on session download-dir
         let sessionDownloadDir = AppSettings.shared.downloadURL()?.path ?? ""

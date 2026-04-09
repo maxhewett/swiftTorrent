@@ -26,7 +26,7 @@ final class LocalWebServer {
         rpc.attach(engine: engine)
 
         if currentPort != nil {
-            print("TorrentEngine attached; Transmission RPC is now live at /transmission/rpc")
+            RunDiagnostics.shared.log("TorrentEngine attached; Transmission RPC is now live at /transmission/rpc")
         }
     }
 
@@ -41,11 +41,11 @@ final class LocalWebServer {
         do {
             try server.start(p, forceIPv4: true)
             currentPort = p
-            print("WebUI running at http://127.0.0.1:\(p)")
-            print("Transmission RPC available at http://127.0.0.1:\(p)/transmission/rpc")
+            RunDiagnostics.shared.log("WebUI running at http://127.0.0.1:\(p)")
+            RunDiagnostics.shared.log("Transmission RPC available at http://127.0.0.1:\(p)/transmission/rpc")
         } catch {
             currentPort = nil
-            print("Failed to start web server:", error)
+            RunDiagnostics.shared.log("Failed to start web server: \(error.localizedDescription)", level: "ERROR")
         }
     }
 
@@ -95,12 +95,25 @@ final class LocalWebServer {
             return DispatchQueue.main.sync { self.handleArrGrab(req) }
         }
 
+        server["/api/diagnostics/last-run"] = { _ in
+            DispatchQueue.main.sync {
+                .ok(.json(RunDiagnostics.shared.diagnosticsSnapshot(logLines: 200)))
+            }
+        }
+
+        server["/api/diagnostics/logs"] = { req in
+            DispatchQueue.main.sync {
+                let requested = self.queryIntValue(named: "lines", in: req) ?? 200
+                return .ok(.json(RunDiagnostics.shared.diagnosticsSnapshot(logLines: requested)))
+            }
+        }
+
         rpc.install(on: server)
     }
 
     private func configureStaticWebUI() {
         guard let webRoot = Bundle.main.resourceURL?.appendingPathComponent("WebUI") else {
-            print("WebUI folder not found in bundle resources")
+            RunDiagnostics.shared.log("WebUI folder not found in bundle resources", level: "ERROR")
             return
         }
 
@@ -331,6 +344,12 @@ final class LocalWebServer {
                 "tvdb_id",
                 "sonarr_series_tvdbid"
             ]),
+            traktID: firstIntValue(in: fields, keys: [
+                "traktId",
+                "trakt_id",
+                "radarr_movie_traktid",
+                "sonarr_series_traktid"
+            ]),
             updatedAt: Date()
         )
 
@@ -487,6 +506,11 @@ final class LocalWebServer {
 
     private func queryValue(named name: String, in request: HttpRequest) -> String? {
         request.queryParams.first(where: { $0.0 == name })?.1
+    }
+
+    private func queryIntValue(named name: String, in request: HttpRequest) -> Int? {
+        guard let raw = queryValue(named: name, in: request) else { return nil }
+        return Int(raw)
     }
 
     private func stableKey(for torrent: TorrentRow) -> String {

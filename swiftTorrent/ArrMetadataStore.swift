@@ -22,6 +22,7 @@ struct ArrMetadataHint: Codable, Hashable {
     let imdbID: String?
     let tmdbID: Int?
     let tvdbID: Int?
+    let traktID: Int?
     let updatedAt: Date
 
     var mediaType: MediaMetadata.MediaType? {
@@ -75,7 +76,7 @@ enum ArrMetadataStore {
             )
             try data.write(to: url, options: [.atomic])
         } catch {
-            print("ArrMetadataStore save failed:", error)
+            RunDiagnostics.shared.log("ArrMetadataStore save failed: \(error.localizedDescription)", level: "ERROR")
         }
     }
 

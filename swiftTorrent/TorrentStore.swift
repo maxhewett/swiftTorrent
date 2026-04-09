@@ -102,7 +102,7 @@ enum TorrentStore {
             )
             try data.write(to: url, options: [.atomic])
         } catch {
-            print("TorrentStore save failed:", error)
+            RunDiagnostics.shared.log("TorrentStore save failed: \(error.localizedDescription)", level: "ERROR")
         }
     }
 
