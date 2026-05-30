@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import CoreServices
 
 struct SettingsView: View {
     var body: some View {
@@ -148,7 +149,8 @@ private struct DownloadsSettingsTab: View {
             ) {
                 folderRow(label: "Download folder",
                           systemImage: "arrow.down.circle",
-                          url: settings.resolvedDownloadURL) {
+                          url: settings.resolvedDownloadURL,
+                          fallbackPath: settings.downloadPathForDisplay) {
                     pickFolder { url in try settings.setDownloadURL(url) }
                 }
             }
@@ -179,6 +181,41 @@ private struct DownloadsSettingsTab: View {
             }
 
             SettingsCard(
+                title: "Seeding",
+                subtitle: "Automatically remove torrents from the list after seeding thresholds. Sonarr/Radarr-managed torrents are excluded."
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Auto-remove after seeding time", isOn: $settings.autoRemoveAfterSeedTime)
+
+                    HStack {
+                        Text("Seed time limit")
+                        Spacer()
+                        Stepper(value: $settings.seedTimeLimitMinutes, in: 5...10080, step: 5) {
+                            Text("\(settings.seedTimeLimitMinutes) min")
+                                .monospacedDigit()
+                                .frame(width: 90, alignment: .trailing)
+                        }
+                        .disabled(!settings.autoRemoveAfterSeedTime)
+                    }
+
+                    Divider()
+
+                    Toggle("Auto-remove after seed ratio", isOn: $settings.autoRemoveAfterSeedRatio)
+
+                    HStack {
+                        Text("Seed ratio limit")
+                        Spacer()
+                        Stepper(value: $settings.seedRatioLimit, in: 0.1...50, step: 0.1) {
+                            Text(String(format: "%.1f", settings.seedRatioLimit))
+                                .monospacedDigit()
+                                .frame(width: 70, alignment: .trailing)
+                        }
+                        .disabled(!settings.autoRemoveAfterSeedRatio)
+                    }
+                }
+            }
+
+            SettingsCard(
                 title: "Destinations",
                 subtitle: "Completed downloads are moved here when auto-cleanup is enabled. These destinations back the built-in Movies and TV categories."
             ) {
@@ -199,18 +236,10 @@ private struct DownloadsSettingsTab: View {
 
             SettingsCard(
                 title: "Categories",
-                subtitle: "Category key is the stored value used by swiftTorrent and integrations. Display title is what the UI shows. Symbol uses the SF Symbols name that appears beside the title."
+                subtitle: "Manage torrent categories."
             ) {
                 VStack(alignment: .leading, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        SettingsHint(title: "Built-in categories", detail: "movie and tv are fixed because they map directly to the app's Movies and TV organisation and downstream cleanup behaviour.")
-                        SettingsHint(title: "SF Symbols", detail: "Use names like film, tv, shippingbox, or tag. The symbol preview updates from the name you enter.")
-                    }
-
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Add category")
-                            .font(.headline)
-
                         HStack(alignment: .top, spacing: 12) {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Category key")
@@ -270,9 +299,6 @@ private struct DownloadsSettingsTab: View {
                     }
 
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Configured categories")
-                            .font(.headline)
-
                         ForEach(settings.categoryDefinitionsForUI) { category in
                             CategoryEditorCard(category: category)
                         }
@@ -290,7 +316,7 @@ private struct DownloadsSettingsTab: View {
         }
     }
 
-    private func folderRow(label: String, systemImage: String, url: URL?, action: @escaping () -> Void) -> some View {
+    private func folderRow(label: String, systemImage: String, url: URL?, fallbackPath: String? = nil, action: @escaping () -> Void) -> some View {
         HStack(spacing: 12) {
             Image(systemName: systemImage)
                 .foregroundStyle(.secondary)
@@ -298,9 +324,9 @@ private struct DownloadsSettingsTab: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(label)
-                Text(shortenPath(url?.path))
+                Text(shortenPath(url?.path ?? fallbackPath))
                     .font(.caption)
-                    .foregroundStyle(url == nil ? .tertiary : .secondary)
+                    .foregroundStyle((url == nil && (fallbackPath?.isEmpty ?? true)) ? .tertiary : .secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -439,6 +465,7 @@ private struct CategoryPreviewPill: View {
 private struct IntegrationSettingsTab: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var webUIPortText: String = ""
+    @State private var magnetClaimMessage: String?
 
     var body: some View {
         SettingsScrollLayout {
@@ -524,6 +551,24 @@ private struct IntegrationSettingsTab: View {
                     }
                 }
             }
+
+            SettingsCard(
+                title: "Magnet Links",
+                subtitle: "Make swiftTorrent the default app for magnet links opened from Safari or other apps."
+            ) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Button("Claim magnet links") {
+                        claimMagnetLinks()
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    if let magnetClaimMessage {
+                        Text(magnetClaimMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
         .onAppear {
             if webUIPortText.isEmpty { webUIPortText = String(settings.webUIPort) }
@@ -532,6 +577,18 @@ private struct IntegrationSettingsTab: View {
             let s = String(settings.webUIPort)
             if webUIPortText != s { webUIPortText = s }
         }
+    }
+
+    private func claimMagnetLinks() {
+        guard let bundleID = Bundle.main.bundleIdentifier else {
+            magnetClaimMessage = "Unable to detect app bundle ID."
+            return
+        }
+
+        let status = LSSetDefaultHandlerForURLScheme("magnet" as CFString, bundleID as CFString)
+        magnetClaimMessage = status == noErr
+            ? "swiftTorrent is now the default handler for magnet links."
+            : "Could not claim magnet links (OSStatus \(status))."
     }
 }
 

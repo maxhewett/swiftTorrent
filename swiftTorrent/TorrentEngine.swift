@@ -22,6 +22,8 @@ struct TorrentRow: Identifiable, Hashable {
     var totalWantedDone: Int64
     var downBps: Int
     var upBps: Int
+    var downloadedTotal: Int64
+    var uploadedTotal: Int64
     var peers: Int
     var seeds: Int
     var state: Int
@@ -72,9 +74,11 @@ final class TorrentEngine: ObservableObject {
     @Published var mediaByTorrentID: [String: MediaMetadata] = [:]
     @Published var metadataLookupStateByID: [String: MetadataLookupState] = [:]
     @Published var metadataCandidatesByID: [String: [MetadataCandidate]] = [:]
+    @Published var userFacingError: String?
 
     private var lastProgressByID: [String: Double] = [:]
     private var startedAtByStableKey: [String: Date] = [:]
+    private var seedingStartedAtByStableKey: [String: Date] = [:]
     private var didBootstrapCompletionTracking = false
 
     private var session: STSessionRef?
@@ -695,9 +699,16 @@ final class TorrentEngine: ObservableObject {
 
         let trimmedMagnet = magnet.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedMagnet.isEmpty else { return "Empty magnet link" }
+        let trimmedSavePath = savePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSavePath.isEmpty else { return "Save path is empty" }
+
+        if let availabilityError = validateSavePathAvailability(trimmedSavePath) {
+            userFacingError = availabilityError
+            return availabilityError
+        }
 
         do {
-            try FileManager.default.createDirectory(atPath: savePath, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(atPath: trimmedSavePath, withIntermediateDirectories: true)
         } catch {
             return "Failed to create save directory: \(error.localizedDescription)"
         }
@@ -710,7 +721,7 @@ final class TorrentEngine: ObservableObject {
             let entry = StoredTorrent(
                 key: stable,
                 magnet: trimmedMagnet,
-                savePath: savePath,
+                savePath: trimmedSavePath,
                 category: normalizeCategory(category),
                 overrideQuery: overrideQuery?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? overrideQuery?.trimmingCharacters(in: .whitespacesAndNewlines) : nil,
                 overrideYear: overrideYear,
@@ -731,7 +742,7 @@ final class TorrentEngine: ObservableObject {
 
         var errBuf = Array<CChar>(repeating: 0, count: 512)
         let ok = trimmedMagnet.withCString { magnetC in
-            savePath.withCString { pathC in
+            trimmedSavePath.withCString { pathC in
                 st_add_magnet(s, magnetC, pathC, &errBuf, Int32(errBuf.count))
             }
         }
@@ -759,6 +770,25 @@ final class TorrentEngine: ObservableObject {
         schedulePoll()
         return nil
     }
+
+    func clearUserFacingError() {
+        userFacingError = nil
+    }
+
+    #if canImport(AppKit)
+    func showInFinder(torrentID: String) {
+        guard let path = savePath(forLiveTorrentID: torrentID) else {
+            userFacingError = "No saved download path found for this torrent."
+            return
+        }
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            userFacingError = "Download folder is unavailable: \(path)"
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+    #endif
 
     // Debounces rapid poll() calls (e.g. when many torrents are added at once)
     private func schedulePoll() {
@@ -808,6 +838,7 @@ final class TorrentEngine: ObservableObject {
         queuedTorrentKeys.removeAll { $0 == stable }
         pendingAutoResumeKeys.remove(stable)
         startedAtByStableKey[stable] = nil
+        seedingStartedAtByStableKey[stable] = nil
         savePausedKeys(desiredPausedKeys)
         PosterCache.remove(for: id)
         filesByTorrentID[id] = nil
@@ -905,6 +936,8 @@ final class TorrentEngine: ObservableObject {
                     totalWantedDone: Int64(st.total_wanted_done),
                     downBps: Int(st.download_rate),
                     upBps: Int(st.upload_rate),
+                    downloadedTotal: Int64(st.total_downloaded),
+                    uploadedTotal: Int64(st.total_uploaded),
                     peers: Int(st.num_peers),
                     seeds: Int(st.num_seeds),
                     state: Int(st.state),
@@ -921,6 +954,13 @@ final class TorrentEngine: ObservableObject {
             let stable = stableKey(forLiveTorrentID: row.id, items: storedItems)
             if startedAtByStableKey[stable] == nil {
                 startedAtByStableKey[stable] = Date()
+            }
+            if row.isSeeding {
+                if seedingStartedAtByStableKey[stable] == nil {
+                    seedingStartedAtByStableKey[stable] = Date()
+                }
+            } else {
+                seedingStartedAtByStableKey[stable] = nil
             }
         }
 
@@ -945,8 +985,60 @@ final class TorrentEngine: ObservableObject {
         }
 
         autoCleanupIfNeeded(previous: previous, current: rows)
+        autoRemoveSeededIfNeeded(current: rows, storedItems: storedItems)
 
         for t in rows { lastProgressByID[t.id] = t.progress }
+    }
+
+    private func autoRemoveSeededIfNeeded(current: [TorrentRow], storedItems: [StoredTorrent]) {
+        let settings = AppSettings.shared
+        let evaluateTime = settings.autoRemoveAfterSeedTime && settings.seedTimeLimitMinutes > 0
+        let evaluateRatio = settings.autoRemoveAfterSeedRatio && settings.seedRatioLimit > 0
+        guard evaluateTime || evaluateRatio else { return }
+
+        let cutoff = TimeInterval(settings.seedTimeLimitMinutes * 60)
+        let now = Date()
+        var removeIDs: [String] = []
+
+        for row in current {
+            guard row.isSeeding else { continue }
+            let stable = stableKey(forLiveTorrentID: row.id, items: storedItems)
+            if shouldSkipAutoRemoval(forStableKey: stable) { continue }
+
+            var shouldRemove = false
+
+            if evaluateTime, let seededAt = seedingStartedAtByStableKey[stable] {
+                if now.timeIntervalSince(seededAt) >= cutoff {
+                    shouldRemove = true
+                }
+            }
+
+            if !shouldRemove, evaluateRatio, row.downloadedTotal > 0 {
+                let ratio = Double(row.uploadedTotal) / Double(row.downloadedTotal)
+                if ratio >= settings.seedRatioLimit {
+                    shouldRemove = true
+                }
+            }
+
+            if shouldRemove {
+                removeIDs.append(row.id)
+            }
+        }
+
+        guard !removeIDs.isEmpty else { return }
+        for id in removeIDs {
+            removeTorrent(id: id, deleteFiles: false)
+        }
+    }
+
+    private func shouldSkipAutoRemoval(forStableKey stableKey: String) -> Bool {
+        guard let hint = ArrMetadataStore.find(key: stableKey) else { return false }
+        switch hint.source {
+        case .radarr, .sonarr:
+            return true
+        case .unknown:
+            return false
+        }
     }
 
     private func applyPendingAutoResumes(current: [TorrentRow], storedItems: [StoredTorrent]) {
@@ -1226,5 +1318,30 @@ final class TorrentEngine: ObservableObject {
             print("Cleanup failed: \(error.localizedDescription)")
             return false
         }
+    }
+
+    private func validateSavePathAvailability(_ path: String) -> String? {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: path, isDirectory: &isDir) {
+            if !isDir.boolValue {
+                return "Save path is not a folder: \(path)"
+            }
+            return nil
+        }
+
+        if path.hasPrefix("/Volumes/") {
+            let parts = path.split(separator: "/")
+            if parts.count >= 2 {
+                let mountName = String(parts[1])
+                let mountRoot = "/Volumes/\(mountName)"
+                var mountIsDir: ObjCBool = false
+                if !fm.fileExists(atPath: mountRoot, isDirectory: &mountIsDir) || !mountIsDir.boolValue {
+                    return "Cannot reach network volume '\(mountName)'. Reconnect it and try again."
+                }
+            }
+        }
+
+        return nil
     }
 }

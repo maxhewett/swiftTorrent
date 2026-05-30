@@ -29,8 +29,8 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let errorText {
-                Text(errorText)
+            if let messageText {
+                Text(messageText)
                     .foregroundStyle(.red)
                     .padding(.horizontal)
                     .padding(.top, 10)
@@ -104,6 +104,9 @@ struct ContentView: View {
                     overrideYear: overrideYear,
                     overrideType: overrideType
                 )
+                if errorText == nil {
+                    engine.clearUserFacingError()
+                }
             }
             .id(addSheetMagnet ?? "__manual_add__")
             .presentationDetents([.medium])
@@ -147,6 +150,13 @@ struct ContentView: View {
                 confirmRemove = true
             } label: {
                 Label("Remove", systemImage: "trash")
+            }
+            .disabled(selectedTorrentIDs.isEmpty)
+
+            Button {
+                showSelectedInFinder()
+            } label: {
+                Label("Show in Finder", systemImage: "folder")
             }
             .disabled(selectedTorrentIDs.isEmpty)
 
@@ -226,11 +236,23 @@ struct ContentView: View {
                     }
                 }
                 Divider()
+                Button {
+                    for id in targets {
+                        engine.showInFinder(torrentID: id)
+                    }
+                } label: {
+                    Label("Show in Finder", systemImage: "folder")
+                }
+                Divider()
                 Button("Remove…", role: .destructive) {
                     torrentsToRemove = targets
                     confirmRemove = true
                 }
             }
+    }
+
+    private var messageText: String? {
+        errorText ?? engine.userFacingError
     }
 
     // MARK: - Selection
@@ -260,6 +282,12 @@ struct ContentView: View {
             } else {
                 engine.pauseTorrent(id: t.id)
             }
+        }
+    }
+
+    private func showSelectedInFinder() {
+        for id in selectedTorrentIDs {
+            engine.showInFinder(torrentID: id)
         }
     }
 

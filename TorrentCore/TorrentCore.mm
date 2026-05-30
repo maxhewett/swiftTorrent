@@ -157,6 +157,8 @@ int32_t st_get_torrents(STSessionRef session, STTorrentStatus* out_items, int32_
 
         out.download_rate = st.download_rate;
         out.upload_rate = st.upload_rate;
+        out.total_downloaded = st.all_time_download;
+        out.total_uploaded = st.all_time_upload;
 
         out.num_peers = st.num_peers;
         out.num_seeds = st.num_seeds;

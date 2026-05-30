@@ -207,13 +207,6 @@ final class TransmissionRPC {
         let downloadDir = (args["download-dir"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let savePath = (downloadDir?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? (downloadDir ?? "") : sessionDownloadDir
 
-        // Ensure the folder exists
-        do {
-            try FileManager.default.createDirectory(atPath: savePath, withIntermediateDirectories: true)
-        } catch {
-            return .badRequest(.text("Cannot create download dir: \(error.localizedDescription)"))
-        }
-
         // Derive a category if Radarr used /downloads/Movie style
         let base = sessionDownloadDir.isEmpty ? "" : (sessionDownloadDir.hasSuffix("/") ? String(sessionDownloadDir.dropLast()) : sessionDownloadDir)
         let category: String? = savePath.hasPrefix(base) ? URL(fileURLWithPath: savePath).lastPathComponent.lowercased() : nil

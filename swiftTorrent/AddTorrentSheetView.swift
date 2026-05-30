@@ -18,9 +18,11 @@ struct AddTorrentSheetView: View {
     @State private var magnet = ""
     @State private var savePath = (FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
                                    ?? (NSHomeDirectory() + "/Downloads"))
+    @State private var savePathWasEdited = false
     @State private var category: String = ""
     @State private var categoryWasEdited = false
     @State private var suppressCategoryTracking = false
+    @State private var suppressSavePathTracking = false
     @State private var showingFixMatchSheet = false
 
     @State private var parsedName = ""
@@ -96,6 +98,11 @@ struct AddTorrentSheetView: View {
 
                     TextField("Save path…", text: $savePath)
                         .textFieldStyle(.roundedBorder)
+                        .onChange(of: savePath) { _, _ in
+                            if !suppressSavePathTracking {
+                                savePathWasEdited = true
+                            }
+                        }
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -113,6 +120,9 @@ struct AddTorrentSheetView: View {
                 .onChange(of: category) { _, _ in
                     if !suppressCategoryTracking {
                         categoryWasEdited = true
+                        if !savePathWasEdited {
+                            applyAutomaticSavePathForCategory()
+                        }
                     }
                 }
             }
@@ -153,11 +163,16 @@ struct AddTorrentSheetView: View {
             if category.isEmpty {
                 applyAutomaticCategory(settings.categoryDefinitionsForUI.first?.id ?? "")
             }
+            suppressSavePathTracking = true
+            savePath = settings.preferredSavePath(for: category)
+            suppressSavePathTracking = false
+            savePathWasEdited = false
             categoryWasEdited = false
             analyzeTaskID = UUID()
         }
         .onChange(of: magnet) { _, _ in
             categoryWasEdited = false
+            savePathWasEdited = false
             seedOverridesFromParsedName()
             analyzeTaskID = UUID()
         }
@@ -453,6 +468,9 @@ struct AddTorrentSheetView: View {
             if let matched, !categoryWasEdited {
                 applyAutomaticCategory(matched.type == .show ? "tv" : "movie")
             }
+            if !savePathWasEdited {
+                applyAutomaticSavePathForCategory()
+            }
         }
     }
 
@@ -460,6 +478,12 @@ struct AddTorrentSheetView: View {
         suppressCategoryTracking = true
         category = value
         suppressCategoryTracking = false
+    }
+
+    private func applyAutomaticSavePathForCategory() {
+        suppressSavePathTracking = true
+        savePath = settings.preferredSavePath(for: category)
+        suppressSavePathTracking = false
     }
 }
 

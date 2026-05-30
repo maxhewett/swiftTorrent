@@ -23,6 +23,8 @@ typedef struct {
 
     int32_t  download_rate;    // bytes/sec
     int32_t  upload_rate;      // bytes/sec
+    int64_t  total_downloaded; // bytes
+    int64_t  total_uploaded;   // bytes
 
     int32_t  num_peers;
     int32_t  num_seeds;

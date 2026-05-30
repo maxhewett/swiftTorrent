@@ -83,6 +83,13 @@ final class AppSettings: ObservableObject {
         static let legacyCategories = "swiftTorrent.settings.categories"
         static let recentDownloads = "swiftTorrent.settings.recentDownloads"
         static let recentCompletionKeys = "swiftTorrent.settings.recentCompletionKeys"
+        static let lastDownloadPath = "swiftTorrent.settings.lastDownloadPath"
+        static let lastMoviesPath = "swiftTorrent.settings.lastMoviesPath"
+        static let lastTVPath = "swiftTorrent.settings.lastTVPath"
+        static let autoRemoveAfterSeedTime = "swiftTorrent.settings.autoRemoveAfterSeedTime"
+        static let seedTimeLimitMinutes = "swiftTorrent.settings.seedTimeLimitMinutes"
+        static let autoRemoveAfterSeedRatio = "swiftTorrent.settings.autoRemoveAfterSeedRatio"
+        static let seedRatioLimit = "swiftTorrent.settings.seedRatioLimit"
     }
 
     static let defaultCategories: [CategoryDefinition] = [
@@ -128,6 +135,22 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(autoFilterNonMediaFiles, forKey: K.autoFilterNonMediaFiles) }
     }
 
+    @Published var autoRemoveAfterSeedTime: Bool = false {
+        didSet { UserDefaults.standard.set(autoRemoveAfterSeedTime, forKey: K.autoRemoveAfterSeedTime) }
+    }
+
+    @Published var seedTimeLimitMinutes: Int = 120 {
+        didSet { UserDefaults.standard.set(seedTimeLimitMinutes, forKey: K.seedTimeLimitMinutes) }
+    }
+
+    @Published var autoRemoveAfterSeedRatio: Bool = false {
+        didSet { UserDefaults.standard.set(autoRemoveAfterSeedRatio, forKey: K.autoRemoveAfterSeedRatio) }
+    }
+
+    @Published var seedRatioLimit: Double = 1.5 {
+        didSet { UserDefaults.standard.set(seedRatioLimit, forKey: K.seedRatioLimit) }
+    }
+
     @Published var categoryDefinitions: [CategoryDefinition] = [] {
         didSet {
             let normalized = Self.normalizeCategoryDefinitions(categoryDefinitions)
@@ -171,6 +194,9 @@ final class AppSettings: ObservableObject {
     @Published private(set) var resolvedMoviesURL: URL?
     @Published private(set) var resolvedTVURL: URL?
     @Published private(set) var resolvedDownloadURL: URL?
+    @Published private(set) var lastMoviesPath: String = ""
+    @Published private(set) var lastTVPath: String = ""
+    @Published private(set) var lastDownloadPath: String = ""
 
     private var isRefreshing = false
 
@@ -213,6 +239,9 @@ final class AppSettings: ObservableObject {
         self.resolvedMoviesURL = nil
         self.resolvedTVURL = nil
         self.resolvedDownloadURL = nil
+        self.lastMoviesPath = UserDefaults.standard.string(forKey: K.lastMoviesPath) ?? ""
+        self.lastTVPath = UserDefaults.standard.string(forKey: K.lastTVPath) ?? ""
+        self.lastDownloadPath = UserDefaults.standard.string(forKey: K.lastDownloadPath) ?? ""
 
         let storedPort = UserDefaults.standard.integer(forKey: K.webUIPort)
         self.webUIPort = (1...65535).contains(storedPort) ? storedPort : 8080
@@ -226,6 +255,20 @@ final class AppSettings: ObservableObject {
         } else {
             self.autoFilterNonMediaFiles = UserDefaults.standard.bool(forKey: K.autoFilterNonMediaFiles)
         }
+        if UserDefaults.standard.object(forKey: K.autoRemoveAfterSeedTime) == nil {
+            self.autoRemoveAfterSeedTime = false
+        } else {
+            self.autoRemoveAfterSeedTime = UserDefaults.standard.bool(forKey: K.autoRemoveAfterSeedTime)
+        }
+        let storedSeedMinutes = UserDefaults.standard.integer(forKey: K.seedTimeLimitMinutes)
+        self.seedTimeLimitMinutes = storedSeedMinutes > 0 ? storedSeedMinutes : 120
+        if UserDefaults.standard.object(forKey: K.autoRemoveAfterSeedRatio) == nil {
+            self.autoRemoveAfterSeedRatio = false
+        } else {
+            self.autoRemoveAfterSeedRatio = UserDefaults.standard.bool(forKey: K.autoRemoveAfterSeedRatio)
+        }
+        let storedRatio = UserDefaults.standard.double(forKey: K.seedRatioLimit)
+        self.seedRatioLimit = storedRatio > 0 ? storedRatio : 1.5
         self.categoryDefinitions = Self.loadCategoryDefinitions()
 
         refreshResolvedURLs()
@@ -330,19 +373,46 @@ final class AppSettings: ObservableObject {
 
     func setMoviesURL(_ url: URL) throws {
         moviesBookmarkData = try makeBookmark(for: url)
+        rememberLastPath(url.path, key: K.lastMoviesPath)
     }
 
     func setTVURL(_ url: URL) throws {
         tvBookmarkData = try makeBookmark(for: url)
+        rememberLastPath(url.path, key: K.lastTVPath)
     }
 
     func setDownloadURL(_ url: URL) throws {
         downloadBookmarkData = try makeBookmark(for: url)
+        rememberLastPath(url.path, key: K.lastDownloadPath)
     }
 
     func moviesURL() -> URL? { resolvedMoviesURL }
     func tvURL() -> URL? { resolvedTVURL }
     func downloadURL() -> URL? { resolvedDownloadURL }
+
+    var downloadPathForDisplay: String? {
+        resolvedDownloadURL?.path ?? (lastDownloadPath.isEmpty ? nil : lastDownloadPath)
+    }
+
+    func preferredSavePath(for rawCategory: String?) -> String {
+        let fallback = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
+            ?? (NSHomeDirectory() + "/Downloads")
+
+        switch normalizedCategoryValue(rawCategory) {
+        case "tv":
+            if let url = resolvedTVURL { return url.path }
+            if !lastTVPath.isEmpty { return lastTVPath }
+        case "movie":
+            if let url = resolvedMoviesURL { return url.path }
+            if !lastMoviesPath.isEmpty { return lastMoviesPath }
+        default:
+            break
+        }
+
+        if let url = resolvedDownloadURL { return url.path }
+        if !lastDownloadPath.isEmpty { return lastDownloadPath }
+        return fallback
+    }
 
     private func makeBookmark(for url: URL) throws -> Data {
         try url.bookmarkData(
@@ -368,6 +438,10 @@ final class AppSettings: ObservableObject {
         if mStale, let mURL, let refreshed = try? makeBookmark(for: mURL) { moviesBookmarkData = refreshed }
         if tStale, let tURL, let refreshed = try? makeBookmark(for: tURL) { tvBookmarkData = refreshed }
         if dStale, let dURL, let refreshed = try? makeBookmark(for: dURL) { downloadBookmarkData = refreshed }
+
+        if let path = mURL?.path { rememberLastPath(path, key: K.lastMoviesPath) }
+        if let path = tURL?.path { rememberLastPath(path, key: K.lastTVPath) }
+        if let path = dURL?.path { rememberLastPath(path, key: K.lastDownloadPath) }
     }
 
     private func resolveBookmark(_ data: Data?) -> (url: URL?, stale: Bool) {
@@ -380,6 +454,22 @@ final class AppSettings: ObservableObject {
             bookmarkDataIsStale: &stale
         ) else { return (nil, false) }
         return (url, stale)
+    }
+
+    private func rememberLastPath(_ path: String, key: String) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        UserDefaults.standard.set(trimmed, forKey: key)
+        switch key {
+        case K.lastMoviesPath:
+            lastMoviesPath = trimmed
+        case K.lastTVPath:
+            lastTVPath = trimmed
+        case K.lastDownloadPath:
+            lastDownloadPath = trimmed
+        default:
+            break
+        }
     }
 
     private static func loadCategoryDefinitions() -> [CategoryDefinition] {
