@@ -964,7 +964,6 @@ final class TorrentEngine: ObservableObject {
         TorrentStore.remove(key: stable)
         ArrMetadataStore.remove(key: stable)
         AppSettings.shared.unmarkCleaned(stable)
-        AppSettings.shared.unhideTorrent(stable)
         AppSettings.shared.clearRecentCompletionMark(for: stable)
         AppSettings.shared.setCleanedDestination(nil, for: stable)
         desiredPausedKeys.remove(stable)
@@ -1534,7 +1533,6 @@ final class TorrentEngine: ObservableObject {
                     if ok {
                         await MainActor.run {
                             settings.markCleaned(stable)
-                            settings.hideTorrent(stable)
                             PosterCache.remove(for: t.id)
                         }
                     }
@@ -1549,7 +1547,6 @@ final class TorrentEngine: ObservableObject {
                 if ok {
                     await MainActor.run {
                         settings.markCleaned(stable)
-                        settings.hideTorrent(stable)
                         PosterCache.remove(for: t.id)
                     }
                 }

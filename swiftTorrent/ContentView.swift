@@ -398,9 +398,6 @@ struct ContentView: View {
         var other: [TorrentRow] = []
 
         for t in engine.torrents {
-            let stable = stableKey(for: t)
-            if settings.hiddenTorrentKeys.contains(stable) { continue }
-
             let c = settings.normalizedCategoryValue(t.category) ?? normalizeCategory(t.category)
 
             if c == "tv" {
@@ -420,7 +417,7 @@ struct ContentView: View {
     }
 
     private var visibleTorrents: [TorrentRow] {
-        engine.torrents.filter { !settings.hiddenTorrentKeys.contains(stableKey(for: $0)) }
+        engine.torrents
     }
 
     private func stableKey(for torrent: TorrentRow) -> String {

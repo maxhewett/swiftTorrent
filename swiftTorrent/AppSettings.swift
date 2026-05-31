@@ -355,6 +355,7 @@ final class AppSettings: ObservableObject {
     func unmarkCleaned(_ key: String) { cleanedTorrentKeys.remove(key) }
     func hideTorrent(_ key: String) { hiddenTorrentKeys.insert(key) }
     func unhideTorrent(_ key: String) { hiddenTorrentKeys.remove(key) }
+    func clearHiddenTorrents() { hiddenTorrentKeys = [] }
 
     func resetCleaned() {
         cleanedTorrentKeys = []
