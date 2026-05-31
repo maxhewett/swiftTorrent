@@ -105,12 +105,17 @@ struct TorrentListRow: View {
     }
 
     private var posterPlaceholder: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(.quaternary)
-            Image(systemName: "photo")
-                .foregroundStyle(.secondary)
+        let category = (t.category ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let symbol: String
+        switch category {
+        case "tv":
+            symbol = "tv"
+        case "movie":
+            symbol = "film"
+        default:
+            symbol = "tray"
         }
+        return PosterFallbackView(symbol: symbol, cornerRadius: 6)
     }
 
     private var loadingPosterPlaceholder: some View {
@@ -140,23 +145,24 @@ struct TorrentListRow: View {
     }
 
     private var statusLineText: String? {
+        let sizeProgress = "\(formatBytes(t.totalWantedDone))/\(formatBytes(t.totalWanted))"
         if engine.isQueued(torrentID: t.id) {
-            return "Paused - Queued • \(percentString)"
+            return "Paused - Queued • \(percentString) • \(sizeProgress)"
         }
 
         if t.isPaused {
-            return "Paused • \(percentString)"
+            return "Paused • \(percentString) • \(sizeProgress)"
         }
 
         if t.progress >= 0.999 {
-            return "Download complete ✓"
+            return "Download complete ✓ • \(sizeProgress)"
         }
 
         if let eta = etaString() {
-            return "\(eta) • \(percentString)"
+            return "\(eta) • \(percentString) • \(sizeProgress)"
         }
 
-        return percentString
+        return "\(percentString) • \(sizeProgress)"
     }
 
     // MARK: - Subviews
@@ -219,6 +225,10 @@ struct TorrentListRow: View {
         let kb = Double(bps) / 1024.0
         if kb < 1024 { return String(format: "%.0f KB/s", kb) }
         return String(format: "%.1f MB/s", kb / 1024.0)
+    }
+
+    private func formatBytes(_ v: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: max(0, v), countStyle: .file)
     }
 
     private func plural(_ value: Int, one: String, many: String) -> String {

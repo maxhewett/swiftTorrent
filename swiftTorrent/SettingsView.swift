@@ -10,42 +10,240 @@ import UniformTypeIdentifiers
 import CoreServices
 
 struct SettingsView: View {
-    var body: some View {
-        TabView {
-            GeneralSettingsTab()
-                .tabItem { Label("General", systemImage: "gear") }
+    var onClose: (() -> Void)?
 
-            DownloadsSettingsTab()
-                .tabItem { Label("Downloads", systemImage: "arrow.down.circle") }
+    private enum Section: String, CaseIterable, Identifiable {
+        case general
+        case downloads
+        case appearance
+        case integration
 
-            IntegrationSettingsTab()
-                .tabItem { Label("Integration", systemImage: "antenna.radiowaves.left.and.right") }
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .general: return "General"
+            case .downloads: return "Downloads"
+            case .appearance: return "Appearance"
+            case .integration: return "Integration"
+            }
         }
-        .frame(width: 720, height: 640)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color.white.opacity(0.12),
-                    Color.white.opacity(0.03)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
+        var symbol: String {
+            switch self {
+            case .general: return "gear"
+            case .downloads: return "arrow.down.circle"
+            case .appearance: return "dock.rectangle"
+            case .integration: return "antenna.radiowaves.left.and.right"
+            }
+        }
+    }
+
+    @State private var selection: Section? = .general
+    @State private var activeSubsectionID: String?
+    @State private var scrollRequestID: String?
+
+    private struct Subsection: Identifiable, Hashable {
+        let id: String
+        let title: String
+        let symbol: String
+    }
+
+    private var currentSelection: Section { selection ?? .general }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            settingsSidebar
+
+            Divider()
+
+            settingsDetail
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: selection) { _, newSelection in
+            let section = newSelection ?? .general
+            activeSubsectionID = subsections(for: section).first?.id
+            scrollRequestID = activeSubsectionID
+        }
+        .onAppear {
+            let section = selection ?? .general
+            activeSubsectionID = subsections(for: section).first?.id
+        }
+    }
+
+    private func sectionDescription(_ section: Section) -> String {
+        switch section {
+        case .general:
+            return "Manage general app behavior, maintenance, and updates."
+        case .downloads:
+            return "Control download paths, queue behavior, seeding, and categories."
+        case .appearance:
+            return "Customize Dock icon telemetry and visual display options."
+        case .integration:
+            return "Configure Web UI, RPC credentials, and magnet link handling."
+        }
+    }
+
+    private func subsections(for section: Section) -> [Subsection] {
+        switch section {
+        case .general:
+            return [
+                Subsection(id: "general.behaviour", title: "Behaviour", symbol: "slider.horizontal.3"),
+                Subsection(id: "general.maintenance", title: "Maintenance", symbol: "wrench.and.screwdriver"),
+                Subsection(id: "general.updates", title: "Updates", symbol: "arrow.triangle.2.circlepath")
+            ]
+        case .downloads:
+            return [
+                Subsection(id: "downloads.default", title: "Default Location", symbol: "folder"),
+                Subsection(id: "downloads.queue", title: "Queue", symbol: "line.3.horizontal.decrease.circle"),
+                Subsection(id: "downloads.seeding", title: "Seeding", symbol: "dot.radiowaves.left.and.right"),
+                Subsection(id: "downloads.destinations", title: "Destinations", symbol: "externaldrive"),
+                Subsection(id: "downloads.categories", title: "Categories", symbol: "tag")
+            ]
+        case .appearance:
+            return [
+                Subsection(id: "appearance.dock", title: "Dock Icon", symbol: "dock.rectangle"),
+                Subsection(id: "appearance.sidebar", title: "Sidebar Labels", symbol: "list.bullet.rectangle")
+            ]
+        case .integration:
+            return [
+                Subsection(id: "integration.web", title: "Web Interface", symbol: "network"),
+                Subsection(id: "integration.rpc", title: "Sonarr/Radarr RPC", symbol: "lock.shield"),
+                Subsection(id: "integration.magnet", title: "Magnet Links", symbol: "link")
+            ]
+        }
+    }
+
+    private var settingsSidebar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Settings")
+                .font(.title2.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.bottom, 8)
+
+            ForEach(Section.allCases) { section in
+                VStack(alignment: .leading, spacing: 4) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selection = section
+                        }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: section.symbol)
+                                .frame(width: 18)
+                            Text(section.title)
+                                .font(.callout.weight(.semibold))
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(currentSelection == section ? .white : .primary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(currentSelection == section ? Color.accentColor : Color.clear)
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    if currentSelection == section {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(subsections(for: section)) { subsection in
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        activeSubsectionID = subsection.id
+                                        scrollRequestID = subsection.id
+                                    }
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: subsection.symbol)
+                                            .font(.caption)
+                                            .frame(width: 14)
+                                        Text(subsection.title)
+                                            .font(.caption.weight(.medium))
+                                        Spacer(minLength: 0)
+                                    }
+                                    .foregroundStyle(activeSubsectionID == subsection.id ? Color.accentColor : .secondary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .fill(activeSubsectionID == subsection.id ? Color.accentColor.opacity(0.14) : Color.clear)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.leading, 18)
+                        .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
+                    }
+                }
+                .animation(.easeInOut(duration: 0.22), value: currentSelection)
+            }
+
+            Spacer()
+
+            if let onClose {
+                Button(action: onClose) {
+                    Label("Back to Torrents", systemImage: "chevron.left")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 6)
+            }
+        }
+        .padding(14)
+        .frame(width: 220)
+        .background(.ultraThinMaterial)
+    }
+
+    private var settingsDetail: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(currentSelection.title, systemImage: currentSelection.symbol)
+                    .font(.largeTitle.weight(.semibold))
+                Text(sectionDescription(currentSelection))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 26)
+            .padding(.top, 24)
+            .padding(.bottom, 18)
+
+            Divider()
+
+            Group {
+                switch currentSelection {
+                case .general:
+                    GeneralSettingsTab(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID)
+                case .downloads:
+                    DownloadsSettingsTab(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID)
+                case .appearance:
+                    AppearanceSettingsTab(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID)
+                case .integration:
+                    IntegrationSettingsTab(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
 // MARK: - General
 
 private struct GeneralSettingsTab: View {
+    @Binding var activeSubsectionID: String?
+    @Binding var scrollRequestID: String?
     @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var appUpdater: AppUpdater
     @State private var confirmResetCleanup = false
 
     var body: some View {
-        SettingsScrollLayout {
+        SettingsScrollLayout(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID) {
             SettingsCard(
                 title: "Behaviour",
+                symbol: "slider.horizontal.3",
                 subtitle: "Choose what swiftTorrent does automatically while downloads finish and move around the app."
             ) {
                 VStack(alignment: .leading, spacing: 12) {
@@ -56,9 +254,12 @@ private struct GeneralSettingsTab: View {
                         .help("Marks non-media files like exe, iso, and other junk as unwanted while still allowing video and subtitle files such as mkv, mp4, m4v, and srt.")
                 }
             }
+            .id("general.behaviour")
+            .trackedSection(id: "general.behaviour")
 
             SettingsCard(
                 title: "Maintenance",
+                symbol: "wrench.and.screwdriver",
                 subtitle: "Cleanup history prevents the same finished torrent from being moved twice. Reset it if you want to re-run cleanup on older items."
             ) {
                 HStack {
@@ -73,9 +274,12 @@ private struct GeneralSettingsTab: View {
                         .buttonStyle(.bordered)
                 }
             }
+            .id("general.maintenance")
+            .trackedSection(id: "general.maintenance")
 
             SettingsCard(
                 title: "Updates",
+                symbol: "arrow.triangle.2.circlepath",
                 subtitle: "Sparkle checks the GitHub-hosted appcast for new releases. The feed URL and public key must already be configured in the app target."
             ) {
                 VStack(alignment: .leading, spacing: 12) {
@@ -122,6 +326,8 @@ private struct GeneralSettingsTab: View {
                     }
                 }
             }
+            .id("general.updates")
+            .trackedSection(id: "general.updates")
         }
         .confirmationDialog("Reset cleanup history?", isPresented: $confirmResetCleanup, titleVisibility: .visible) {
             Button("Reset", role: .destructive) { settings.resetCleaned() }
@@ -135,6 +341,8 @@ private struct GeneralSettingsTab: View {
 // MARK: - Downloads
 
 private struct DownloadsSettingsTab: View {
+    @Binding var activeSubsectionID: String?
+    @Binding var scrollRequestID: String?
     @ObservedObject private var settings = AppSettings.shared
     @State private var errorText: String?
     @State private var newCategoryID = ""
@@ -142,9 +350,10 @@ private struct DownloadsSettingsTab: View {
     @State private var newCategorySymbol = "tag"
 
     var body: some View {
-        SettingsScrollLayout {
+        SettingsScrollLayout(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID) {
             SettingsCard(
                 title: "Default Location",
+                symbol: "folder",
                 subtitle: "Where new torrents are saved while they are downloading."
             ) {
                 folderRow(label: "Download folder",
@@ -154,34 +363,68 @@ private struct DownloadsSettingsTab: View {
                     pickFolder { url in try settings.setDownloadURL(url) }
                 }
             }
+            .id("downloads.default")
+            .trackedSection(id: "downloads.default")
 
             SettingsCard(
                 title: "Queue",
+                symbol: "line.3.horizontal.decrease.circle",
                 subtitle: "Torrents beyond this limit stay queued until an active slot becomes available."
             ) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Max active downloads")
-                        Text("Set a practical cap if you want slower drives or connections to stay predictable.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Max active downloads")
+                            Text("Set a practical cap if you want slower drives or connections to stay predictable.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        HStack(spacing: 8) {
+                            Stepper(value: $settings.maxActiveDownloads, in: 1...20, step: 1) {
+                                EmptyView()
+                            }
+                            Text("\(settings.maxActiveDownloads)")
+                                .monospacedDigit()
+                                .frame(width: 42, alignment: .trailing)
+                        }
                     }
 
-                    Spacer()
+                    Divider()
 
-                    HStack(spacing: 8) {
-                        Stepper(value: $settings.maxActiveDownloads, in: 1...20, step: 1) {
-                            EmptyView()
+                    Toggle("Auto-manage idle downloads", isOn: $settings.autoManageIdleDownloads)
+
+                    HStack {
+                        Text("Pause after idle")
+                        Spacer()
+                        Stepper(value: $settings.idleDownloadMinutes, in: 1...120, step: 1) {
+                            Text("\(settings.idleDownloadMinutes) min")
+                                .monospacedDigit()
+                                .frame(width: 80, alignment: .trailing)
                         }
-                        Text("\(settings.maxActiveDownloads)")
-                            .monospacedDigit()
-                            .frame(width: 42, alignment: .trailing)
+                        .disabled(!settings.autoManageIdleDownloads)
+                    }
+
+                    HStack {
+                        Text("Try resume every")
+                        Spacer()
+                        Stepper(value: $settings.idleResumeMinutes, in: 1...60, step: 1) {
+                            Text("\(settings.idleResumeMinutes) min")
+                                .monospacedDigit()
+                                .frame(width: 80, alignment: .trailing)
+                        }
+                        .disabled(!settings.autoManageIdleDownloads)
                     }
                 }
             }
+            .id("downloads.queue")
+            .trackedSection(id: "downloads.queue")
 
             SettingsCard(
                 title: "Seeding",
+                symbol: "dot.radiowaves.left.and.right",
                 subtitle: "Automatically remove torrents from the list after seeding thresholds. Sonarr/Radarr-managed torrents are excluded."
             ) {
                 VStack(alignment: .leading, spacing: 12) {
@@ -214,9 +457,12 @@ private struct DownloadsSettingsTab: View {
                     }
                 }
             }
+            .id("downloads.seeding")
+            .trackedSection(id: "downloads.seeding")
 
             SettingsCard(
                 title: "Destinations",
+                symbol: "externaldrive",
                 subtitle: "Completed downloads are moved here when auto-cleanup is enabled. These destinations back the built-in Movies and TV categories."
             ) {
                 VStack(spacing: 12) {
@@ -233,9 +479,12 @@ private struct DownloadsSettingsTab: View {
                     }
                 }
             }
+            .id("downloads.destinations")
+            .trackedSection(id: "downloads.destinations")
 
             SettingsCard(
                 title: "Categories",
+                symbol: "tag",
                 subtitle: "Manage torrent categories."
             ) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -305,6 +554,8 @@ private struct DownloadsSettingsTab: View {
                     }
                 }
             }
+            .id("downloads.categories")
+            .trackedSection(id: "downloads.categories")
 
             if let errorText {
                 SettingsCard(title: "Folder Access", subtitle: "Folder selection failed.") {
@@ -460,17 +711,113 @@ private struct CategoryPreviewPill: View {
     }
 }
 
+// MARK: - Appearance
+
+private struct AppearanceSettingsTab: View {
+    @Binding var activeSubsectionID: String?
+    @Binding var scrollRequestID: String?
+    @ObservedObject private var settings = AppSettings.shared
+    private let metricModes: [(id: String, title: String)] = [
+        ("both", "Download + Upload"),
+        ("download", "Download Only"),
+        ("upload", "Upload (Seeding) Only"),
+        ("eta", "Total ETA")
+    ]
+    private let styleModes: [(id: String, title: String)] = [
+        ("auto", "Auto"),
+        ("colorful", "Colorful"),
+        ("dark", "Dark"),
+        ("tinted", "Tinted"),
+        ("translucent", "Translucent")
+    ]
+    private let categorySecondaryModes: [(id: String, title: String)] = [
+        ("none", "Off (Default)"),
+        ("eta", "Category ETA"),
+        ("size", "Category Size")
+    ]
+
+    var body: some View {
+        SettingsScrollLayout(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID) {
+            SettingsCard(
+                title: "Dock Icon",
+                symbol: "dock.rectangle",
+                subtitle: "Control the live transfer telemetry shown on the Dock icon."
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Show active torrent count badge", isOn: $settings.dockShowActiveCountBadge)
+                    Toggle("Show transfer overlay", isOn: $settings.dockShowTransferOverlay)
+
+                    HStack {
+                        Text("Overlay Content")
+                        Spacer()
+                        Picker("Overlay Content", selection: $settings.dockOverlayMetricMode) {
+                            ForEach(metricModes, id: \.id) { mode in
+                                Text(mode.title).tag(mode.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 210)
+                        .disabled(!settings.dockShowTransferOverlay)
+                    }
+
+                    HStack {
+                        Text("Overlay Style")
+                        Spacer()
+                        Picker("Overlay Style", selection: $settings.dockOverlayStyleMode) {
+                            ForEach(styleModes, id: \.id) { mode in
+                                Text(mode.title).tag(mode.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 170)
+                        .disabled(!settings.dockShowTransferOverlay)
+                    }
+
+                    Text("The transfer overlay displays download and upload rates as stacked stats at the bottom of the Dock icon.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .id("appearance.dock")
+            .trackedSection(id: "appearance.dock")
+
+            SettingsCard(
+                title: "Sidebar Category Labels",
+                symbol: "list.bullet.rectangle",
+                subtitle: "Show optional aggregate detail next to each category count."
+            ) {
+                HStack {
+                    Text("Secondary Metric")
+                    Spacer()
+                    Picker("Secondary Metric", selection: $settings.categoryHeaderSecondaryMode) {
+                        ForEach(categorySecondaryModes, id: \.id) { mode in
+                            Text(mode.title).tag(mode.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 190)
+                }
+            }
+            .id("appearance.sidebar")
+            .trackedSection(id: "appearance.sidebar")
+        }
+    }
+}
+
 // MARK: - Integration
 
 private struct IntegrationSettingsTab: View {
+    @Binding var activeSubsectionID: String?
+    @Binding var scrollRequestID: String?
     @ObservedObject private var settings = AppSettings.shared
     @State private var webUIPortText: String = ""
     @State private var magnetClaimMessage: String?
 
     var body: some View {
-        SettingsScrollLayout {
+        SettingsScrollLayout(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID) {
             SettingsCard(
                 title: "Web Interface",
+                symbol: "network",
                 subtitle: "Access swiftTorrent from a browser on this machine. The address below is the exact local URL to open."
             ) {
                 VStack(spacing: 14) {
@@ -512,9 +859,12 @@ private struct IntegrationSettingsTab: View {
                     }
                 }
             }
+            .id("integration.web")
+            .trackedSection(id: "integration.web")
 
             SettingsCard(
                 title: "Sonarr & Radarr (RPC)",
+                symbol: "lock.shield",
                 subtitle: "These credentials are what Sonarr and Radarr use when connecting to swiftTorrent's RPC interface. Leave both blank if you want no authentication."
             ) {
                 VStack(spacing: 14) {
@@ -551,9 +901,12 @@ private struct IntegrationSettingsTab: View {
                     }
                 }
             }
+            .id("integration.rpc")
+            .trackedSection(id: "integration.rpc")
 
             SettingsCard(
                 title: "Magnet Links",
+                symbol: "link",
                 subtitle: "Make swiftTorrent the default app for magnet links opened from Safari or other apps."
             ) {
                 VStack(alignment: .leading, spacing: 10) {
@@ -569,6 +922,8 @@ private struct IntegrationSettingsTab: View {
                     }
                 }
             }
+            .id("integration.magnet")
+            .trackedSection(id: "integration.magnet")
         }
         .onAppear {
             if webUIPortText.isEmpty { webUIPortText = String(settings.webUIPort) }
@@ -593,40 +948,53 @@ private struct IntegrationSettingsTab: View {
 }
 
 private struct SettingsScrollLayout<Content: View>: View {
+    @Binding var activeSubsectionID: String?
+    @Binding var scrollRequestID: String?
     @ViewBuilder let content: Content
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                content
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    content
+                }
+                .padding(24)
+                .padding(.bottom, 220)
             }
-            .padding(24)
+            .coordinateSpace(name: "settingsScroll")
+            .onChange(of: scrollRequestID) { _, id in
+                guard let id else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+            }
+            .onPreferenceChange(SettingsSectionPositionPreferenceKey.self) { values in
+                guard !values.isEmpty else { return }
+                let sorted = values.sorted { abs($0.offset) < abs($1.offset) }
+                activeSubsectionID = sorted.first?.id
+            }
         }
         .scrollContentBackground(.hidden)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color.white.opacity(0.12),
-                    Color.clear,
-                    Color.black.opacity(0.05)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
 private struct SettingsCard<Content: View>: View {
     let title: String
+    var symbol: String? = nil
     let subtitle: String
     @ViewBuilder let content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
+                if let symbol {
+                    Label(title, systemImage: symbol)
+                        .font(.headline)
+                } else {
+                    Text(title)
+                        .font(.headline)
+                }
                 Text(subtitle)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -636,12 +1004,43 @@ private struct SettingsCard<Content: View>: View {
             content
         }
         .padding(18)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(.white.opacity(0.08))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08))
         )
+    }
+}
+
+private struct SectionOffset: Equatable {
+    let id: String
+    let offset: CGFloat
+}
+
+private struct SettingsSectionPositionPreferenceKey: PreferenceKey {
+    static var defaultValue: [SectionOffset] = []
+    static func reduce(value: inout [SectionOffset], nextValue: () -> [SectionOffset]) {
+        value.append(contentsOf: nextValue())
+    }
+}
+
+private struct TrackedSectionModifier: ViewModifier {
+    let id: String
+    func body(content: Content) -> some View {
+        content.background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: SettingsSectionPositionPreferenceKey.self,
+                    value: [SectionOffset(id: id, offset: geo.frame(in: .named("settingsScroll")).minY)]
+                )
+            }
+        )
+    }
+}
+
+private extension View {
+    func trackedSection(id: String) -> some View {
+        modifier(TrackedSectionModifier(id: id))
     }
 }
 

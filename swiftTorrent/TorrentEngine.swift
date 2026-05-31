@@ -13,6 +13,13 @@ import TorrentCore
 import AppKit
 #endif
 
+private extension Double {
+    func rounded(toPlaces places: Int) -> Double {
+        let factor = pow(10.0, Double(places))
+        return (self * factor).rounded() / factor
+    }
+}
+
 struct TorrentRow: Identifiable, Hashable {
     let id: String
     let coreIndex: Int
@@ -31,6 +38,107 @@ struct TorrentRow: Identifiable, Hashable {
     var isPaused: Bool
     var category: String?
 }
+
+#if canImport(AppKit)
+private enum DockOverlayMetricMode: String, CaseIterable {
+    case both
+    case download
+    case upload
+    case eta
+}
+
+private enum DockOverlayStyleMode: String, CaseIterable {
+    case auto
+    case colorful
+    case dark
+    case tinted
+    case translucent
+}
+
+private final class DockTelemetryView: NSView {
+    var line1Text: String = "↓ 0B/s" {
+        didSet { needsDisplay = true }
+    }
+    var line2Text: String? = "↑ 0B/s" {
+        didSet { needsDisplay = true }
+    }
+    var styleMode: DockOverlayStyleMode = .colorful {
+        didSet { needsDisplay = true }
+    }
+
+    private let iconImage: NSImage = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+
+    override var isFlipped: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.clear.setFill()
+        dirtyRect.fill()
+
+        iconImage.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1.0)
+
+        let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white,
+            .paragraphStyle: paragraph
+        ]
+
+        let second = line2Text ?? ""
+        let sampleWidth = max((line1Text as NSString).size(withAttributes: attrs).width, (second as NSString).size(withAttributes: attrs).width)
+        let stripWidth = min(bounds.width - 16, max(72, sampleWidth + 14))
+        let stripHeight: CGFloat = line2Text == nil ? 24 : 36
+        let stripRect = NSRect(
+            x: 6,
+            y: 6,
+            width: stripWidth,
+            height: stripHeight
+        )
+
+        let badgePath = NSBezierPath(roundedRect: stripRect, xRadius: 8, yRadius: 8)
+        NSColor.black.withAlphaComponent(0.22).setFill()
+        let shadowRect = stripRect.offsetBy(dx: 0, dy: -1)
+        NSBezierPath(roundedRect: shadowRect, xRadius: 8, yRadius: 8).fill()
+
+        let gradient: NSGradient
+        switch styleMode {
+        case .colorful:
+            gradient = NSGradient(colors: [NSColor.systemGreen.withAlphaComponent(0.96), NSColor.systemMint.withAlphaComponent(0.9)])!
+        case .dark:
+            gradient = NSGradient(colors: [NSColor(calibratedWhite: 0.18, alpha: 0.95), NSColor(calibratedWhite: 0.08, alpha: 0.95)])!
+        case .tinted:
+            let tint = NSColor.controlAccentColor
+            gradient = NSGradient(colors: [tint.withAlphaComponent(0.95), tint.blended(withFraction: 0.35, of: .black)?.withAlphaComponent(0.9) ?? tint.withAlphaComponent(0.9)])!
+        case .translucent:
+            gradient = NSGradient(colors: [NSColor.windowBackgroundColor.withAlphaComponent(0.72), NSColor.windowBackgroundColor.withAlphaComponent(0.58)])!
+        case .auto:
+            gradient = NSGradient(colors: [NSColor.systemGreen.withAlphaComponent(0.96), NSColor.systemMint.withAlphaComponent(0.9)])!
+        }
+        gradient.draw(in: badgePath, angle: 90)
+        NSColor.white.withAlphaComponent(0.14).setStroke()
+        badgePath.lineWidth = 1
+        badgePath.stroke()
+
+        if line2Text != nil {
+            let dividerY = stripRect.midY
+            let dividerRect = NSRect(x: stripRect.minX + 6, y: dividerY, width: stripRect.width - 12, height: 1)
+            NSColor.white.withAlphaComponent(0.12).setFill()
+            dividerRect.fill()
+        }
+
+        if let secondLine = line2Text {
+            let topRect = NSRect(x: stripRect.minX + 2, y: stripRect.midY + 1, width: stripRect.width - 4, height: stripRect.height / 2 - 2)
+            let bottomRect = NSRect(x: stripRect.minX + 2, y: stripRect.minY + 1, width: stripRect.width - 4, height: stripRect.height / 2 - 2)
+            line1Text.draw(in: topRect, withAttributes: attrs)
+            secondLine.draw(in: bottomRect, withAttributes: attrs)
+        } else {
+            let singleRect = NSRect(x: stripRect.minX + 2, y: stripRect.minY + 3, width: stripRect.width - 4, height: stripRect.height - 6)
+            line1Text.draw(in: singleRect, withAttributes: attrs)
+        }
+    }
+}
+#endif
 
 struct TorrentFile: Identifiable, Hashable {
     let id: Int
@@ -79,6 +187,9 @@ final class TorrentEngine: ObservableObject {
     private var lastProgressByID: [String: Double] = [:]
     private var startedAtByStableKey: [String: Date] = [:]
     private var seedingStartedAtByStableKey: [String: Date] = [:]
+    private var idleObservedAtByStableKey: [String: Date] = [:]
+    private var idleAutoPausedAtByStableKey: [String: Date] = [:]
+    private var idleAutoPausedKeys: Set<String> = []
     private var didBootstrapCompletionTracking = false
 
     private var session: STSessionRef?
@@ -777,16 +888,37 @@ final class TorrentEngine: ObservableObject {
 
     #if canImport(AppKit)
     func showInFinder(torrentID: String) {
-        guard let path = savePath(forLiveTorrentID: torrentID) else {
+        let stable = stableKey(forLiveTorrentID: torrentID)
+        let cleanedPath = AppSettings.shared.cleanedDestination(for: stable)
+        let candidate = cleanedPath ?? savePath(forLiveTorrentID: torrentID)
+        guard let path = candidate else {
             userFacingError = "No saved download path found for this torrent."
             return
         }
-        let url = URL(fileURLWithPath: path, isDirectory: true)
-        guard FileManager.default.fileExists(atPath: url.path) else {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: path, isDirectory: &isDir) else {
             userFacingError = "Download folder is unavailable: \(path)"
             return
         }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+
+        if cleanedPath != nil {
+            let url = URL(fileURLWithPath: path, isDirectory: isDir.boolValue)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return
+        }
+
+        // In-progress: prefer the actual torrent payload path under the save root.
+        var targetURL = URL(fileURLWithPath: path, isDirectory: isDir.boolValue)
+        if let row = torrents.first(where: { $0.id == torrentID }) {
+            let payloadDir = targetURL.appendingPathComponent(row.name, isDirectory: true)
+            var payloadIsDir: ObjCBool = false
+            if fm.fileExists(atPath: payloadDir.path, isDirectory: &payloadIsDir) {
+                targetURL = payloadDir
+            }
+        }
+
+        NSWorkspace.shared.activateFileViewerSelecting([targetURL])
     }
     #endif
 
@@ -824,7 +956,7 @@ final class TorrentEngine: ObservableObject {
         poll()
     }
 
-    func removeTorrent(id: String, deleteFiles: Bool) {
+    func removeTorrent(id: String, deleteFiles: Bool, shouldPoll: Bool = true) {
         guard let s = session else { return }
         let stable = stableKey(forLiveTorrentID: id)
         _ = id.withCString { st_torrent_remove(s, $0, deleteFiles) }
@@ -834,11 +966,15 @@ final class TorrentEngine: ObservableObject {
         AppSettings.shared.unmarkCleaned(stable)
         AppSettings.shared.unhideTorrent(stable)
         AppSettings.shared.clearRecentCompletionMark(for: stable)
+        AppSettings.shared.setCleanedDestination(nil, for: stable)
         desiredPausedKeys.remove(stable)
         queuedTorrentKeys.removeAll { $0 == stable }
         pendingAutoResumeKeys.remove(stable)
         startedAtByStableKey[stable] = nil
         seedingStartedAtByStableKey[stable] = nil
+        idleObservedAtByStableKey[stable] = nil
+        idleAutoPausedAtByStableKey[stable] = nil
+        idleAutoPausedKeys.remove(stable)
         savePausedKeys(desiredPausedKeys)
         PosterCache.remove(for: id)
         filesByTorrentID[id] = nil
@@ -847,7 +983,9 @@ final class TorrentEngine: ObservableObject {
         lastProgressByID[id] = nil
         fileFilterAppliedKeys.remove(stable)
 
-        poll()
+        if shouldPoll {
+            poll()
+        }
     }
 
     func setFileWanted(_ wanted: Bool, torrentID: String, fileID: Int) {
@@ -913,6 +1051,7 @@ final class TorrentEngine: ObservableObject {
 
         guard count > 0 else {
             torrents = []
+            updateDockTelemetry(current: [])
             return
         }
 
@@ -972,6 +1111,7 @@ final class TorrentEngine: ObservableObject {
 
         applyPendingAutoResumes(current: rows, storedItems: storedItems)
         applyAutomaticFileFilterIfNeeded(current: rows, storedItems: storedItems)
+        handleIdleDownloadManagement(current: rows, storedItems: storedItems)
 
         // Promote queued torrents when a download slot is free
         promoteQueuedIfNeeded()
@@ -986,6 +1126,7 @@ final class TorrentEngine: ObservableObject {
 
         autoCleanupIfNeeded(previous: previous, current: rows)
         autoRemoveSeededIfNeeded(current: rows, storedItems: storedItems)
+        updateDockTelemetry(current: rows)
 
         for t in rows { lastProgressByID[t.id] = t.progress }
     }
@@ -1027,8 +1168,9 @@ final class TorrentEngine: ObservableObject {
 
         guard !removeIDs.isEmpty else { return }
         for id in removeIDs {
-            removeTorrent(id: id, deleteFiles: false)
+            removeTorrent(id: id, deleteFiles: false, shouldPoll: false)
         }
+        schedulePoll()
     }
 
     private func shouldSkipAutoRemoval(forStableKey stableKey: String) -> Bool {
@@ -1093,7 +1235,8 @@ final class TorrentEngine: ObservableObject {
                 startedAt: startedAt,
                 completedAt: completedAt,
                 durationSeconds: duration,
-                outcome: AppSettings.shared.autoCleanupEnabled ? "Completed (cleanup queued)" : "Completed"
+                outcome: AppSettings.shared.autoCleanupEnabled ? "Completed (cleanup queued)" : "Completed",
+                cleanedDestinationPath: AppSettings.shared.cleanedDestination(for: stable)
             )
             AppSettings.shared.appendRecentDownload(item)
         }
@@ -1113,6 +1256,71 @@ final class TorrentEngine: ObservableObject {
 
         // refresh UI state after applying
         poll()
+    }
+
+    private func handleIdleDownloadManagement(current: [TorrentRow], storedItems: [StoredTorrent]) {
+        let settings = AppSettings.shared
+        guard settings.autoManageIdleDownloads, let s = session else {
+            idleObservedAtByStableKey.removeAll()
+            idleAutoPausedAtByStableKey.removeAll()
+            idleAutoPausedKeys.removeAll()
+            return
+        }
+
+        let now = Date()
+        let idleCutoff = TimeInterval(max(1, settings.idleDownloadMinutes) * 60)
+        let resumeCutoff = TimeInterval(max(1, settings.idleResumeMinutes) * 60)
+        let activeStable = Set(current.map { stableKey(forLiveTorrentID: $0.id, items: storedItems) })
+
+        idleObservedAtByStableKey = idleObservedAtByStableKey.filter { activeStable.contains($0.key) }
+        idleAutoPausedAtByStableKey = idleAutoPausedAtByStableKey.filter { activeStable.contains($0.key) }
+        idleAutoPausedKeys = idleAutoPausedKeys.intersection(activeStable)
+
+        for row in current {
+            let stable = stableKey(forLiveTorrentID: row.id, items: storedItems)
+
+            if row.isPaused {
+                if idleAutoPausedKeys.contains(stable),
+                   let pausedAt = idleAutoPausedAtByStableKey[stable],
+                   now.timeIntervalSince(pausedAt) >= resumeCutoff {
+                    _ = row.id.withCString { st_torrent_resume(s, $0) }
+                    idleAutoPausedKeys.remove(stable)
+                    idleAutoPausedAtByStableKey[stable] = nil
+                    idleObservedAtByStableKey[stable] = nil
+                }
+                continue
+            }
+
+            let isDownloadCandidate = !row.isSeeding && row.progress < 0.999
+            guard isDownloadCandidate else {
+                idleObservedAtByStableKey[stable] = nil
+                idleAutoPausedAtByStableKey[stable] = nil
+                idleAutoPausedKeys.remove(stable)
+                continue
+            }
+
+            let hasActivity = row.downBps > 0 || row.upBps > 0 || row.peers > 0
+            if hasActivity {
+                idleObservedAtByStableKey[stable] = nil
+                continue
+            }
+
+            if idleObservedAtByStableKey[stable] == nil {
+                idleObservedAtByStableKey[stable] = now
+            }
+
+            guard !idleAutoPausedKeys.contains(stable),
+                  !desiredPausedKeys.contains(stable),
+                  !queuedTorrentKeys.contains(stable),
+                  let idleSince = idleObservedAtByStableKey[stable],
+                  now.timeIntervalSince(idleSince) >= idleCutoff else { continue }
+
+            _ = row.id.withCString { st_torrent_pause(s, $0) }
+            idleAutoPausedKeys.insert(stable)
+            idleAutoPausedAtByStableKey[stable] = now
+            idleObservedAtByStableKey[stable] = nil
+            queuedTorrentKeys.append(stable)
+        }
     }
 
     private func promoteQueuedIfNeeded() {
@@ -1149,9 +1357,98 @@ final class TorrentEngine: ObservableObject {
 
     #if canImport(AppKit)
     @objc private func appWillTerminate() {
-        // Save stable keys for paused torrents
-        let pausedStable = Set(torrents.filter { $0.isPaused }.map { stableKey(forLiveTorrentID: $0.id) })
-        savePausedKeys(pausedStable)
+        // Persist only explicit user pauses (not queue or idle auto-pauses).
+        savePausedKeys(desiredPausedKeys)
+    }
+    #endif
+
+    #if canImport(AppKit)
+    private func updateDockTelemetry(current: [TorrentRow]) {
+        let activeDownloads = current.filter { !$0.isPaused && !$0.isSeeding && $0.progress < 0.999 }
+        let activeCount = activeDownloads.count
+        let totalDown = max(0, current.reduce(0) { $0 + $1.downBps })
+        let totalUp = max(0, current.reduce(0) { $0 + $1.upBps })
+        let settings = AppSettings.shared
+        NSApp.dockTile.badgeLabel = settings.dockShowActiveCountBadge && activeCount > 0 ? "\(activeCount)" : nil
+
+        let downLabel = compactRateLabel(bytesPerSecond: totalDown)
+        let upLabel = compactRateLabel(bytesPerSecond: totalUp)
+
+        if settings.dockShowTransferOverlay {
+            let telemetryView: DockTelemetryView
+            if let existing = NSApp.dockTile.contentView as? DockTelemetryView {
+                telemetryView = existing
+            } else {
+                telemetryView = DockTelemetryView(frame: NSRect(x: 0, y: 0, width: 128, height: 128))
+                NSApp.dockTile.contentView = telemetryView
+            }
+            let metricMode = DockOverlayMetricMode(rawValue: settings.dockOverlayMetricMode) ?? .both
+            let styleMode = resolveOverlayStyleMode(from: settings)
+            telemetryView.styleMode = styleMode
+            switch metricMode {
+            case .both:
+                telemetryView.line1Text = "↓ \(downLabel)/s"
+                telemetryView.line2Text = "↑ \(upLabel)/s"
+            case .download:
+                telemetryView.line1Text = "↓ \(downLabel)/s"
+                telemetryView.line2Text = nil
+            case .upload:
+                telemetryView.line1Text = "↑ \(upLabel)/s"
+                telemetryView.line2Text = nil
+            case .eta:
+                telemetryView.line1Text = "ETA"
+                telemetryView.line2Text = totalETAString(for: activeDownloads, totalDownBps: totalDown)
+            }
+        } else {
+            NSApp.dockTile.contentView = nil
+        }
+        NSApp.dockTile.display()
+    }
+
+    private func resolveOverlayStyleMode(from settings: AppSettings) -> DockOverlayStyleMode {
+        let raw = DockOverlayStyleMode(rawValue: settings.dockOverlayStyleMode) ?? .auto
+        guard raw == .auto else { return raw }
+        let appearanceName = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])
+        if appearanceName == .darkAqua {
+            return .dark
+        }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
+            return .translucent
+        }
+        return .colorful
+    }
+
+    private func totalETAString(for activeDownloads: [TorrentRow], totalDownBps: Int) -> String {
+        guard totalDownBps > 0 else { return "Waiting…" }
+        let remaining = activeDownloads.reduce(Int64(0)) { partial, row in
+            partial + max(Int64(0), row.totalWanted - row.totalWantedDone)
+        }
+        guard remaining > 0 else { return "Done" }
+        let seconds = Double(remaining) / Double(totalDownBps)
+        return shortDuration(seconds: seconds)
+    }
+
+    private func shortDuration(seconds: Double) -> String {
+        let s = max(0, Int(seconds.rounded()))
+        let h = s / 3600
+        let m = (s % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m" }
+        return "\(s)s"
+    }
+
+    private func compactRateLabel(bytesPerSecond: Int) -> String {
+        let value = max(0, Double(bytesPerSecond))
+        if value >= 1024 * 1024 * 1024 {
+            return String(format: "%.1fG", (value / (1024 * 1024 * 1024)).rounded(toPlaces: 1))
+        }
+        if value >= 1024 * 1024 {
+            return String(format: "%.1fM", (value / (1024 * 1024)).rounded(toPlaces: 1))
+        }
+        if value >= 1024 {
+            return String(format: "%.0fK", (value / 1024).rounded())
+        }
+        return "\(Int(value.rounded()))B"
     }
     #endif
 
@@ -1313,6 +1610,10 @@ final class TorrentEngine: ObservableObject {
                 settings: cleanupSettings
             )
             print("Cleanup OK -> \(dest.path)")
+            let stable = stableKey(forLiveTorrentID: liveTorrentID)
+            await MainActor.run {
+                AppSettings.shared.setCleanedDestination(dest.path, for: stable)
+            }
             return true
         } catch {
             print("Cleanup failed: \(error.localizedDescription)")

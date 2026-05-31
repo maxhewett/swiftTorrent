@@ -27,7 +27,11 @@ enum TorrentStore {
 
         // Current format
         if let decoded = try? JSONDecoder().decode([StoredTorrent].self, from: data) {
-            return decoded
+            let normalized = normalize(decoded)
+            if normalized != decoded {
+                save(normalized)
+            }
+            return normalized
         }
 
         // Backward compatibility: previous "category but no key" format
@@ -37,7 +41,7 @@ enum TorrentStore {
             let category: String?
         }
         if let legacy = try? JSONDecoder().decode([LegacyCategory].self, from: data) {
-            return legacy.map {
+            let converted = legacy.map {
                 StoredTorrent(
                     key: MagnetKeyExtractor.key(from: $0.magnet) ?? $0.magnet,
                     magnet: $0.magnet,
@@ -48,6 +52,9 @@ enum TorrentStore {
                     overrideType: nil
                 )
             }
+            let normalized = normalize(converted)
+            save(normalized)
+            return normalized
         }
 
         // Backward compatibility: old "tags" format
@@ -57,7 +64,7 @@ enum TorrentStore {
             let tags: Set<String>
         }
         if let tagged = try? JSONDecoder().decode([TagTorrent].self, from: data) {
-            return tagged.map {
+            let converted = tagged.map {
                 StoredTorrent(
                     key: MagnetKeyExtractor.key(from: $0.magnet) ?? $0.magnet,
                     magnet: $0.magnet,
@@ -68,6 +75,9 @@ enum TorrentStore {
                     overrideType: nil
                 )
             }
+            let normalized = normalize(converted)
+            save(normalized)
+            return normalized
         }
 
         // Oldest format: no category/tags
@@ -76,7 +86,7 @@ enum TorrentStore {
             let savePath: String
         }
         if let legacy = try? JSONDecoder().decode([Legacy].self, from: data) {
-            return legacy.map {
+            let converted = legacy.map {
                 StoredTorrent(
                     key: MagnetKeyExtractor.key(from: $0.magnet) ?? $0.magnet,
                     magnet: $0.magnet,
@@ -87,6 +97,9 @@ enum TorrentStore {
                     overrideType: nil
                 )
             }
+            let normalized = normalize(converted)
+            save(normalized)
+            return normalized
         }
 
         return []
@@ -94,8 +107,9 @@ enum TorrentStore {
 
     static func save(_ items: [StoredTorrent]) {
         let url = storeURL()
+        let normalizedItems = normalize(items)
         do {
-            let data = try JSONEncoder().encode(items)
+            let data = try JSONEncoder().encode(normalizedItems)
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
@@ -143,6 +157,41 @@ enum TorrentStore {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = appSupport.appendingPathComponent("swiftTorrent", isDirectory: true)
         return dir.appendingPathComponent(fileName)
+    }
+
+    private static func normalize(_ items: [StoredTorrent]) -> [StoredTorrent] {
+        var byKey: [String: StoredTorrent] = [:]
+        var orderedKeys: [String] = []
+        orderedKeys.reserveCapacity(items.count)
+
+        for item in items {
+            let magnet = item.magnet.trimmingCharacters(in: .whitespacesAndNewlines)
+            let savePath = item.savePath.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !magnet.isEmpty, !savePath.isEmpty else { continue }
+
+            let computedKey = MagnetKeyExtractor.key(from: magnet) ?? magnet
+            let cleanedCategory = item.category?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let normalizedCategory = (cleanedCategory?.isEmpty == false) ? cleanedCategory : nil
+
+            let normalized = StoredTorrent(
+                key: computedKey,
+                magnet: magnet,
+                savePath: savePath,
+                category: normalizedCategory,
+                overrideQuery: item.overrideQuery?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                    ? item.overrideQuery?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    : nil,
+                overrideYear: item.overrideYear,
+                overrideType: item.overrideType
+            )
+
+            if byKey[computedKey] == nil {
+                orderedKeys.append(computedKey)
+            }
+            byKey[computedKey] = normalized // last write wins
+        }
+
+        return orderedKeys.compactMap { byKey[$0] }
     }
 }
 

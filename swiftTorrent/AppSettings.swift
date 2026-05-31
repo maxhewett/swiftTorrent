@@ -37,6 +37,7 @@ struct RecentDownloadItem: Codable, Hashable, Identifiable {
     let completedAt: Date
     let durationSeconds: Double?
     let outcome: String
+    let cleanedDestinationPath: String?
 
     var typeLabel: String {
         switch typeRaw.lowercased() {
@@ -90,6 +91,15 @@ final class AppSettings: ObservableObject {
         static let seedTimeLimitMinutes = "swiftTorrent.settings.seedTimeLimitMinutes"
         static let autoRemoveAfterSeedRatio = "swiftTorrent.settings.autoRemoveAfterSeedRatio"
         static let seedRatioLimit = "swiftTorrent.settings.seedRatioLimit"
+        static let autoManageIdleDownloads = "swiftTorrent.settings.autoManageIdleDownloads"
+        static let idleDownloadMinutes = "swiftTorrent.settings.idleDownloadMinutes"
+        static let idleResumeMinutes = "swiftTorrent.settings.idleResumeMinutes"
+        static let cleanedDestinationByTorrentKey = "swiftTorrent.settings.cleanedDestinationByTorrentKey"
+        static let dockShowTransferOverlay = "swiftTorrent.settings.dockShowTransferOverlay"
+        static let dockShowActiveCountBadge = "swiftTorrent.settings.dockShowActiveCountBadge"
+        static let dockOverlayMetricMode = "swiftTorrent.settings.dockOverlayMetricMode"
+        static let dockOverlayStyleMode = "swiftTorrent.settings.dockOverlayStyleMode"
+        static let categoryHeaderSecondaryMode = "swiftTorrent.settings.categoryHeaderSecondaryMode"
     }
 
     static let defaultCategories: [CategoryDefinition] = [
@@ -151,6 +161,38 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(seedRatioLimit, forKey: K.seedRatioLimit) }
     }
 
+    @Published var autoManageIdleDownloads: Bool = true {
+        didSet { UserDefaults.standard.set(autoManageIdleDownloads, forKey: K.autoManageIdleDownloads) }
+    }
+
+    @Published var idleDownloadMinutes: Int = 10 {
+        didSet { UserDefaults.standard.set(idleDownloadMinutes, forKey: K.idleDownloadMinutes) }
+    }
+
+    @Published var idleResumeMinutes: Int = 3 {
+        didSet { UserDefaults.standard.set(idleResumeMinutes, forKey: K.idleResumeMinutes) }
+    }
+
+    @Published var dockShowTransferOverlay: Bool = true {
+        didSet { UserDefaults.standard.set(dockShowTransferOverlay, forKey: K.dockShowTransferOverlay) }
+    }
+
+    @Published var dockShowActiveCountBadge: Bool = true {
+        didSet { UserDefaults.standard.set(dockShowActiveCountBadge, forKey: K.dockShowActiveCountBadge) }
+    }
+
+    @Published var dockOverlayMetricMode: String = "both" {
+        didSet { UserDefaults.standard.set(dockOverlayMetricMode, forKey: K.dockOverlayMetricMode) }
+    }
+
+    @Published var dockOverlayStyleMode: String = "auto" {
+        didSet { UserDefaults.standard.set(dockOverlayStyleMode, forKey: K.dockOverlayStyleMode) }
+    }
+
+    @Published var categoryHeaderSecondaryMode: String = "none" {
+        didSet { UserDefaults.standard.set(categoryHeaderSecondaryMode, forKey: K.categoryHeaderSecondaryMode) }
+    }
+
     @Published var categoryDefinitions: [CategoryDefinition] = [] {
         didSet {
             let normalized = Self.normalizeCategoryDefinitions(categoryDefinitions)
@@ -197,6 +239,13 @@ final class AppSettings: ObservableObject {
     @Published private(set) var lastMoviesPath: String = ""
     @Published private(set) var lastTVPath: String = ""
     @Published private(set) var lastDownloadPath: String = ""
+    @Published private(set) var cleanedDestinationByTorrentKey: [String: String] {
+        didSet {
+            if let data = try? JSONEncoder().encode(cleanedDestinationByTorrentKey) {
+                UserDefaults.standard.set(data, forKey: K.cleanedDestinationByTorrentKey)
+            }
+        }
+    }
 
     private var isRefreshing = false
 
@@ -242,6 +291,12 @@ final class AppSettings: ObservableObject {
         self.lastMoviesPath = UserDefaults.standard.string(forKey: K.lastMoviesPath) ?? ""
         self.lastTVPath = UserDefaults.standard.string(forKey: K.lastTVPath) ?? ""
         self.lastDownloadPath = UserDefaults.standard.string(forKey: K.lastDownloadPath) ?? ""
+        if let data = UserDefaults.standard.data(forKey: K.cleanedDestinationByTorrentKey),
+           let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+            self.cleanedDestinationByTorrentKey = decoded
+        } else {
+            self.cleanedDestinationByTorrentKey = [:]
+        }
 
         let storedPort = UserDefaults.standard.integer(forKey: K.webUIPort)
         self.webUIPort = (1...65535).contains(storedPort) ? storedPort : 8080
@@ -269,6 +324,28 @@ final class AppSettings: ObservableObject {
         }
         let storedRatio = UserDefaults.standard.double(forKey: K.seedRatioLimit)
         self.seedRatioLimit = storedRatio > 0 ? storedRatio : 1.5
+        if UserDefaults.standard.object(forKey: K.autoManageIdleDownloads) == nil {
+            self.autoManageIdleDownloads = true
+        } else {
+            self.autoManageIdleDownloads = UserDefaults.standard.bool(forKey: K.autoManageIdleDownloads)
+        }
+        let storedIdleMinutes = UserDefaults.standard.integer(forKey: K.idleDownloadMinutes)
+        self.idleDownloadMinutes = storedIdleMinutes > 0 ? storedIdleMinutes : 10
+        let storedIdleResumeMinutes = UserDefaults.standard.integer(forKey: K.idleResumeMinutes)
+        self.idleResumeMinutes = storedIdleResumeMinutes > 0 ? storedIdleResumeMinutes : 3
+        if UserDefaults.standard.object(forKey: K.dockShowTransferOverlay) == nil {
+            self.dockShowTransferOverlay = true
+        } else {
+            self.dockShowTransferOverlay = UserDefaults.standard.bool(forKey: K.dockShowTransferOverlay)
+        }
+        if UserDefaults.standard.object(forKey: K.dockShowActiveCountBadge) == nil {
+            self.dockShowActiveCountBadge = true
+        } else {
+            self.dockShowActiveCountBadge = UserDefaults.standard.bool(forKey: K.dockShowActiveCountBadge)
+        }
+        self.dockOverlayMetricMode = UserDefaults.standard.string(forKey: K.dockOverlayMetricMode) ?? "both"
+        self.dockOverlayStyleMode = UserDefaults.standard.string(forKey: K.dockOverlayStyleMode) ?? "auto"
+        self.categoryHeaderSecondaryMode = UserDefaults.standard.string(forKey: K.categoryHeaderSecondaryMode) ?? "none"
         self.categoryDefinitions = Self.loadCategoryDefinitions()
 
         refreshResolvedURLs()
@@ -299,6 +376,19 @@ final class AppSettings: ObservableObject {
 
     func clearRecentCompletionMark(for key: String) {
         recentCompletionKeys.remove(key)
+    }
+
+    func setCleanedDestination(_ path: String?, for key: String) {
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            cleanedDestinationByTorrentKey.removeValue(forKey: key)
+        } else {
+            cleanedDestinationByTorrentKey[key] = trimmed
+        }
+    }
+
+    func cleanedDestination(for key: String) -> String? {
+        cleanedDestinationByTorrentKey[key]
     }
 
     func removeRecentDownload(id: UUID) {

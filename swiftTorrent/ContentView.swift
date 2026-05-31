@@ -19,7 +19,11 @@ struct ContentView: View {
     @State private var errorText: String?
     @State private var confirmRemove = false
     @State private var torrentsToRemove: Set<String> = []
+    @State private var selectedTorrentOrder: [String] = []
+    @State private var selectionAnchorTorrentID: String?
     @State private var showingRecentRail = false
+    @State private var showingSettings = false
+    @State private var shouldRestoreRecentAfterSettings = false
     @State private var hostWindow: NSWindow?
     @State private var recentPanel = RecentDownloadsPanelController()
     @State private var resizeStartWidth: CGFloat?
@@ -29,6 +33,11 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if showingSettings {
+                SettingsView {
+                    closeSettingsView()
+                }
+            } else {
             if let messageText {
                 Text(messageText)
                     .foregroundStyle(.red)
@@ -51,6 +60,15 @@ struct ContentView: View {
                     detailPane {
                         if let selectedTorrent {
                             TorrentInspectorView(torrent: selectedTorrent, engine: engine)
+                                .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                        } else if !selectedTorrents.isEmpty {
+                            MultiSelectionInspectorView(
+                                torrents: selectedTorrents,
+                                tvCategory: tvCategory,
+                                movieCategory: movieCategory,
+                                posterURLForTorrent: { posterURL(for: $0) }
+                            )
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
                         } else {
                             VStack(spacing: 12) {
                                 Image(systemName: selectedTorrentIDs.count > 1 ? "cursorarrow.motionlines" : "cursorarrow")
@@ -68,10 +86,13 @@ struct ContentView: View {
                                     .frame(maxWidth: 240)
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                            .transition(.opacity)
                         }
                     }
+                    .animation(.spring(response: 0.3, dampingFraction: 0.86), value: selectedTorrentIDs)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
             }
         }
         .background(WindowAccessor(window: $hostWindow))
@@ -125,8 +146,13 @@ struct ContentView: View {
         .onChange(of: hostWindow) { _, _ in
             syncRecentPanel(isShowing: showingRecentRail, animated: false)
         }
-        .onDisappear {
+            .onDisappear {
             recentPanel.close(animated: false)
+        }
+        .onChange(of: visibleTorrents.map(\.id)) { _, visibleIDs in
+            let visibleSet = Set(visibleIDs)
+            selectedTorrentIDs = selectedTorrentIDs.intersection(visibleSet)
+            selectedTorrentOrder.removeAll { !visibleSet.contains($0) || !selectedTorrentIDs.contains($0) }
         }
         .frame(minWidth: 1050, minHeight: 560)
     }
@@ -134,8 +160,14 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var mainToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            SettingsLink {
-                Label("Settings", systemImage: "gearshape")
+            Button {
+                if showingSettings {
+                    closeSettingsView()
+                } else {
+                    openSettingsView()
+                }
+            } label: {
+                Label(showingSettings ? "Back to Torrents" : "Settings", systemImage: showingSettings ? "chevron.left" : "gearshape")
             }
             .keyboardShortcut(",", modifiers: [.command])
             Button {
@@ -144,6 +176,7 @@ struct ContentView: View {
             } label: {
                 Label("Add Torrent", systemImage: "plus")
             }
+            .disabled(showingSettings)
 
             Button(role: .destructive) {
                 torrentsToRemove = selectedTorrentIDs
@@ -151,23 +184,21 @@ struct ContentView: View {
             } label: {
                 Label("Remove", systemImage: "trash")
             }
-            .disabled(selectedTorrentIDs.isEmpty)
+            .disabled(showingSettings || selectedTorrentIDs.isEmpty)
 
             Button {
                 showSelectedInFinder()
             } label: {
                 Label("Show in Finder", systemImage: "folder")
             }
-            .disabled(selectedTorrentIDs.isEmpty)
+            .disabled(showingSettings || selectedTorrentIDs.isEmpty)
 
             Button {
                 togglePauseResume()
             } label: {
                 Label(pauseResumeLabel, systemImage: pauseResumeSymbol)
             }
-            .disabled(selectedTorrentIDs.isEmpty)
-
-            Divider()
+            .disabled(showingSettings || selectedTorrentIDs.isEmpty)
 
             Button {
                 showingRecentRail.toggle()
@@ -175,6 +206,7 @@ struct ContentView: View {
                 Label("Recent", systemImage: showingRecentRail ? "clock.badge.checkmark.fill" : "clock.badge.checkmark")
             }
             .help("Toggle recent downloads panel")
+            .disabled(showingSettings)
         }
     }
 
@@ -217,9 +249,10 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(selectionBackground(for: t))
+            .animation(.spring(response: 0.26, dampingFraction: 0.82), value: selectedTorrentIDs.contains(t.id))
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .onTapGesture {
-                selectedTorrentIDs = [t.id]
+                handleRowSelectionTap(torrentID: t.id)
             }
             .contextMenu {
                 let targets: Set<String> = selectedTorrentIDs.contains(t.id) ? selectedTorrentIDs : [t.id]
@@ -263,7 +296,16 @@ struct ContentView: View {
     }
 
     private var selectedTorrents: [TorrentRow] {
-        visibleTorrents.filter { selectedTorrentIDs.contains($0.id) }
+        let byID = Dictionary(uniqueKeysWithValues: visibleTorrents.map { ($0.id, $0) })
+        var ordered: [TorrentRow] = selectedTorrentOrder.compactMap { id in
+            guard selectedTorrentIDs.contains(id) else { return nil }
+            return byID[id]
+        }
+        let seen = Set(ordered.map(\.id))
+        if seen.count < selectedTorrentIDs.count {
+            ordered.append(contentsOf: visibleTorrents.filter { selectedTorrentIDs.contains($0.id) && !seen.contains($0.id) })
+        }
+        return ordered
     }
 
     private var pauseResumeSymbol: String {
@@ -296,7 +338,56 @@ struct ContentView: View {
             engine.removeTorrent(id: id, deleteFiles: deleteFiles)
         }
         selectedTorrentIDs.subtract(torrentsToRemove)
+        selectedTorrentOrder.removeAll { torrentsToRemove.contains($0) }
         torrentsToRemove = []
+    }
+
+    private func handleRowSelectionTap(torrentID: String) {
+        let flags = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let isCommand = flags.contains(.command)
+        let isShift = flags.contains(.shift)
+
+        if isShift, let anchor = selectionAnchorTorrentID {
+            let orderedIDs = visibleTorrents.map(\.id)
+            if let a = orderedIDs.firstIndex(of: anchor), let b = orderedIDs.firstIndex(of: torrentID) {
+                let low = min(a, b)
+                let high = max(a, b)
+                let rangeIDs = Set(orderedIDs[low...high])
+                if isCommand {
+                    selectedTorrentIDs.formUnion(rangeIDs)
+                    mergeSelectionOrder(with: Array(rangeIDs))
+                } else {
+                    selectedTorrentIDs = rangeIDs
+                    selectedTorrentOrder = orderedIDs[low...high].map { $0 }
+                }
+                return
+            }
+        }
+
+        if isCommand {
+            if selectedTorrentIDs.contains(torrentID) {
+                selectedTorrentIDs.remove(torrentID)
+                selectedTorrentOrder.removeAll { $0 == torrentID }
+            } else {
+                selectedTorrentIDs.insert(torrentID)
+                selectedTorrentOrder.removeAll { $0 == torrentID }
+                selectedTorrentOrder.append(torrentID)
+            }
+            selectionAnchorTorrentID = torrentID
+            return
+        }
+
+        selectedTorrentIDs = [torrentID]
+        selectedTorrentOrder = [torrentID]
+        selectionAnchorTorrentID = torrentID
+    }
+
+    private func mergeSelectionOrder(with ids: [String]) {
+        for id in ids where selectedTorrentIDs.contains(id) {
+            if !selectedTorrentOrder.contains(id) {
+                selectedTorrentOrder.append(id)
+            }
+        }
     }
 
     // MARK: - Grouping
@@ -338,6 +429,12 @@ struct ContentView: View {
 
     private func normalizeCategory(_ s: String?) -> String {
         (s ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func posterURL(for torrent: TorrentRow) -> URL? {
+        if let local = engine.mediaByTorrentID[torrent.id]?.localPosterPath { return local }
+        if let cached = PosterCache.load(for: torrent.id) { return cached }
+        return engine.mediaByTorrentID[torrent.id]?.posterURL
     }
 
     private func sortTorrents(_ torrents: [TorrentRow]) -> [TorrentRow] {
@@ -392,10 +489,16 @@ struct ContentView: View {
 
     private func sidebarSection(title: String, symbol: String, torrents: [TorrentRow]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: symbol)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
+            HStack(spacing: 8) {
+                Label(title, systemImage: symbol)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Text(categorySummaryText(for: torrents))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 8)
 
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(torrents) { t in
@@ -403,6 +506,42 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private func categorySummaryText(for torrents: [TorrentRow]) -> String {
+        let count = torrents.count
+        let mode = settings.categoryHeaderSecondaryMode
+        switch mode {
+        case "eta":
+            return "\(count) • \(categoryETA(for: torrents))"
+        case "size":
+            return "\(count) • \(formatBytes(torrents.reduce(Int64(0)) { $0 + max(0, $1.totalWanted) }))"
+        default:
+            return "\(count)"
+        }
+    }
+
+    private func categoryETA(for torrents: [TorrentRow]) -> String {
+        let active = torrents.filter { !$0.isPaused && !$0.isSeeding && $0.progress < 0.999 }
+        let totalBps = active.reduce(0) { $0 + max(0, $1.downBps) }
+        guard totalBps > 0 else { return "—" }
+        let remaining = active.reduce(Int64(0)) { $0 + max(0, $1.totalWanted - $1.totalWantedDone) }
+        guard remaining > 0 else { return "Done" }
+        let seconds = Double(remaining) / Double(totalBps)
+        return shortDuration(seconds)
+    }
+
+    private func shortDuration(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds.rounded()))
+        let h = s / 3600
+        let m = (s % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m" }
+        return "\(s)s"
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     @ViewBuilder
@@ -485,6 +624,178 @@ struct ContentView: View {
         } else {
             recentPanel.close(animated: animated)
         }
+    }
+
+    private func openSettingsView() {
+        shouldRestoreRecentAfterSettings = showingRecentRail
+        if showingRecentRail {
+            showingRecentRail = false
+            syncRecentPanel(isShowing: false, animated: true)
+        }
+        showingSettings = true
+    }
+
+    private func closeSettingsView() {
+        showingSettings = false
+        if shouldRestoreRecentAfterSettings {
+            showingRecentRail = true
+            syncRecentPanel(isShowing: true, animated: true)
+        }
+        shouldRestoreRecentAfterSettings = false
+    }
+}
+
+private struct SelectionPosterCard: Identifiable, Equatable {
+    let id: String
+    let url: URL?
+    let symbol: String
+    let categoryLabel: String
+}
+
+private struct MultiSelectionInspectorView: View {
+    let torrents: [TorrentRow]
+    let tvCategory: CategoryDefinition
+    let movieCategory: CategoryDefinition
+    let posterURLForTorrent: (TorrentRow) -> URL?
+
+    private var tvCount: Int {
+        torrents.filter { normalizedCategory($0.category) == "tv" }.count
+    }
+
+    private var movieCount: Int {
+        torrents.filter { normalizedCategory($0.category) == "movie" }.count
+    }
+
+    private var otherCount: Int {
+        torrents.count - tvCount - movieCount
+    }
+
+    private var posterCards: [SelectionPosterCard] {
+        torrents.map { torrent in
+            let category = normalizedCategory(torrent.category)
+            let (symbol, label): (String, String)
+            switch category {
+            case "tv":
+                symbol = tvCategory.symbol
+                label = tvCategory.title
+            case "movie":
+                symbol = movieCategory.symbol
+                label = movieCategory.title
+            default:
+                symbol = "tray"
+                label = "Other"
+            }
+            return SelectionPosterCard(
+                id: torrent.id,
+                url: posterURLForTorrent(torrent),
+                symbol: symbol,
+                categoryLabel: label
+            )
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            PosterStackView(cards: posterCards)
+                .frame(width: 146, height: 178)
+
+            Text("\(torrents.count) torrents selected")
+                .font(.title3.weight(.semibold))
+
+            VStack(spacing: 8) {
+                if tvCount > 0 {
+                    summaryPill(label: tvCategory.title, symbol: tvCategory.symbol, count: tvCount)
+                }
+                if movieCount > 0 {
+                    summaryPill(label: movieCategory.title, symbol: movieCategory.symbol, count: movieCount)
+                }
+                if otherCount > 0 {
+                    summaryPill(label: "Other", symbol: "tray", count: otherCount)
+                }
+            }
+
+            Text("Bulk actions apply to the current selection.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(24)
+    }
+
+    private func summaryPill(label: String, symbol: String, count: Int) -> some View {
+        HStack(spacing: 8) {
+            Label(label, systemImage: symbol)
+                .font(.subheadline.weight(.medium))
+            Spacer(minLength: 6)
+            Text("\(count)")
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(.white.opacity(0.1), lineWidth: 1)
+        )
+        .frame(maxWidth: 260)
+    }
+
+    private func normalizedCategory(_ value: String?) -> String {
+        (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
+private struct PosterStackView: View {
+    let cards: [SelectionPosterCard]
+
+    var body: some View {
+        ZStack {
+            ForEach(Array(cards.prefix(3).enumerated()), id: \.element.id) { idx, card in
+                Group {
+                    if let url = card.url {
+                        AsyncImage(url: url, transaction: Transaction(animation: .spring(response: 0.35, dampingFraction: 0.82))) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image.resizable().scaledToFill()
+                            default:
+                                posterPlaceholder(symbol: card.symbol, label: card.categoryLabel)
+                            }
+                        }
+                    } else {
+                        posterPlaceholder(symbol: card.symbol, label: card.categoryLabel)
+                    }
+                }
+                .frame(width: 104, height: 154)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(.white.opacity(0.14), lineWidth: 1)
+                )
+                .rotationEffect(.degrees(Double(idx - 1) * 7))
+                .offset(x: CGFloat(idx - 1) * 20, y: CGFloat(abs(idx - 1)) * 5)
+                .shadow(color: .black.opacity(0.2), radius: 5, x: 0, y: 2)
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.9).combined(with: .opacity).combined(with: .offset(x: 14, y: 10)),
+                    removal: .opacity
+                ))
+            }
+            if cards.isEmpty {
+                posterPlaceholder(symbol: "film.stack", label: "Selection")
+                    .frame(width: 104, height: 154)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(.white.opacity(0.14), lineWidth: 1)
+                    )
+                    .transition(.opacity)
+            }
+        }
+        .animation(.spring(response: 0.36, dampingFraction: 0.82), value: cards.map(\.id))
+    }
+
+    private func posterPlaceholder(symbol: String, label: String) -> some View {
+        PosterFallbackView(symbol: symbol, title: label, cornerRadius: 12)
     }
 }
 
@@ -604,7 +915,7 @@ private final class InteractiveRecentPanel: NSPanel {
 }
 
 private final class FocuslessHostingView<Content: View>: NSHostingView<Content> {
-    override var acceptsFirstResponder: Bool { false }
+    override var acceptsFirstResponder: Bool { true }
     override var focusRingType: NSFocusRingType {
         get { .none }
         set { }
@@ -723,7 +1034,11 @@ private struct RecentDownloadsPanelView: View {
 
     @ViewBuilder
     private func recentPosterView(_ item: RecentDownloadItem) -> some View {
-        RecentPosterThumbnail(localPath: item.posterLocalPath, remoteURLString: item.posterRemoteURL)
+        RecentPosterThumbnail(
+            torrentKey: item.torrentKey,
+            localPath: item.posterLocalPath,
+            remoteURLString: item.posterRemoteURL
+        )
     }
 
     private var posterFallback: some View {
@@ -748,6 +1063,7 @@ private struct RecentDownloadsPanelView: View {
 }
 
 private struct RecentPosterThumbnail: View {
+    let torrentKey: String
     let localPath: String?
     let remoteURLString: String?
     @State private var image: NSImage?
@@ -781,6 +1097,9 @@ private struct RecentPosterThumbnail: View {
     }
 
     private var cacheKey: String {
+        if let cached = PosterCache.load(for: torrentKey) {
+            return "poster-cache:\(cached.path)"
+        }
         if let localPath {
             return "file:\(localPath)"
         }
@@ -807,6 +1126,13 @@ private struct RecentPosterThumbnail: View {
         if let localPath, let localImage = NSImage(contentsOfFile: localPath) {
             Self.cache.setObject(localImage, forKey: cacheKey as NSString)
             image = localImage
+            return
+        }
+
+        if let cachedURL = PosterCache.load(for: torrentKey),
+           let cachedImage = NSImage(contentsOfFile: cachedURL.path) {
+            Self.cache.setObject(cachedImage, forKey: cacheKey as NSString)
+            image = cachedImage
             return
         }
 

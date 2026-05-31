@@ -585,12 +585,7 @@ private struct CandidatePosterView: View {
     }
 
     private var placeholder: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.quaternary)
-            Image(systemName: "photo")
-                .foregroundStyle(.secondary)
-        }
+        PosterFallbackView(symbol: candidate.type == .show ? "tv" : "film", cornerRadius: 8)
     }
 
     private var loadingPlaceholder: some View {
@@ -691,12 +686,7 @@ private struct MediaInfoBlock: View {
     }
 
     private var placeholder: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(.quaternary)
-            Image(systemName: "photo")
-                .foregroundStyle(.secondary)
-        }
+        PosterFallbackView(symbol: meta.type == .show ? "tv" : "film", cornerRadius: 10)
     }
 
     private var loadingPlaceholder: some View {
