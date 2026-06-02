@@ -17,10 +17,38 @@
   },
   "groups" : [
     {
+      "blend-mode" : "screen",
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "glass" : true,
+          "image-name" : "Image 3.png",
+          "name" : "Image 3",
+          "position" : {
+            "scale" : 1.07,
+            "translation-in-points" : [
+              -89.09211455535774,
+              -2.2737367544323206e-13
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "specular" : false,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    },
+    {
       "layers" : [
         {
           "blend-mode" : "screen",
           "glass" : true,
+          "hidden" : true,
           "image-name" : "Image 2.png",
           "name" : "Image 2",
           "opacity" : 1,
