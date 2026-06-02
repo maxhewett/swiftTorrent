@@ -1,4 +1,5 @@
-<img width="150" height="150" alt="swiftTorrent app icon" src="https://github.com/user-attachments/assets/78d3d3fa-8da2-4e8b-8d40-e1687bcbaddc" />
+<img width="150" height="150" alt="swiftTorrent icon" src="https://github.com/user-attachments/assets/2c91bada-00ff-4b38-b124-3ad611b99843" />
+
 
 # swiftTorrent
 
@@ -12,7 +13,7 @@ swiftTorrent is a macOS torrent app focused on movie and TV workflows, with a Sw
 
 ## Features
 
-- SwiftUI-first macOS interface with custom animations and media-centric UX.
+- SwiftUI-first macOS interface with a media-centric UX.
 - Sonarr and Radarr-friendly workflows.
 - Category-based post-download file handling (move/copy behavior).
 - Torrent name cleanup and normalization for better readability.
@@ -20,11 +21,11 @@ swiftTorrent is a macOS torrent app focused on movie and TV workflows, with a Sw
 
 ## Screenshots
 
-### Main App
-<img width="80% " height="auto" alt="stnewscreenshot" src="https://github.com/user-attachments/assets/1ecd78da-b74b-4767-a33f-d2389cee7004" />
+<img width="50%" height="auto" alt="swiftTorrent 2026-06-02 21 53 29" src="https://github.com/user-attachments/assets/6c56add9-9d4a-4c13-bb1e-7b352e5290e0" /><img width="50%" height="auto" alt="swiftTorrent 2026-06-02 21 53 39" src="https://github.com/user-attachments/assets/40b10a92-1a78-4da2-85c7-172dd979d7ad" />
+<img width="50%" height="auto" alt="swiftTorrent 2026-06-02 21 54 07" src="https://github.com/user-attachments/assets/c84e2053-ce9b-4677-b372-dd2ce51971d4" /><img width="50%" height="auto" alt="swiftTorrent 2026-06-02 21 53 48" src="https://github.com/user-attachments/assets/e62f9d07-1d53-4709-aa68-dc502506d7cb" />
 
-### WebUI
-<img width="80%" height="auto" alt="stwebui" src="https://github.com/user-attachments/assets/3fb104c6-d3f6-40bb-9add-13641fb136dd" />
+
+
 
 ## Tech Stack
 
@@ -39,19 +40,6 @@ swiftTorrent is a macOS torrent app focused on movie and TV workflows, with a Sw
 - macOS (Apple Silicon)
 
 > The project is currently built for Apple Silicon only.
-
-## Getting Started
-
-### Requirements
-
-- macOS with Xcode installed
-- Apple Silicon Mac
-
-### Build and Run
-
-1. Open [`swiftTorrent.xcodeproj`](/Users/max/Developer/swiftTorrent/swiftTorrent.xcodeproj) in Xcode.
-2. Select the `swiftTorrent` scheme.
-3. Build and run from Xcode.
 
 ## Repository Layout
 
