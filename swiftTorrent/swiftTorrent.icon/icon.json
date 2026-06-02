@@ -1,20 +1,101 @@
 {
   "fill" : {
-    "automatic-gradient" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
+    "linear-gradient" : [
+      "display-p3:0.43892,0.82037,0.99834,1.00000",
+      "display-p3:0.09544,0.41343,0.94834,1.00000"
+    ],
+    "orientation" : {
+      "start" : {
+        "x" : 0.5,
+        "y" : 0
+      },
+      "stop" : {
+        "x" : 0.5,
+        "y" : 0.7
+      }
+    }
   },
   "groups" : [
     {
       "layers" : [
         {
+          "blend-mode" : "screen",
           "glass" : true,
-          "hidden" : false,
-          "image-name" : "bird.png",
-          "name" : "bird",
+          "image-name" : "Image 2.png",
+          "name" : "Image 2",
+          "opacity" : 1,
           "position" : {
-            "scale" : 0.8,
+            "scale" : 1.07,
             "translation-in-points" : [
-              0,
-              0
+              -4.562114555357766,
+              -13.910000000000196
+            ]
+          }
+        },
+        {
+          "blend-mode" : "hard-light",
+          "image-name" : "Image.png",
+          "name" : "Image",
+          "opacity" : 0.4,
+          "position" : {
+            "scale" : 0.96,
+            "translation-in-points" : [
+              1.1368683772161603e-13,
+              -1.1368683772161603e-13
+            ]
+          }
+        }
+      ],
+      "lighting" : "combined",
+      "name" : "Group",
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "hidden" : true,
+      "layers" : [
+        {
+          "hidden" : true,
+          "image-name" : "swiftbird.png",
+          "name" : "swiftbird",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -24.578125,
+              54.234375
+            ]
+          }
+        },
+        {
+          "image-name" : "swiftbird copy.png",
+          "name" : "swiftbird copy",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              11.530736135066036,
+              100.56922504929025
+            ]
+          }
+        },
+        {
+          "blend-mode" : "overlay",
+          "fill" : "automatic",
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "Image 5.png",
+          "name" : "Image 5",
+          "opacity" : 0.4,
+          "position" : {
+            "scale" : 0.15,
+            "translation-in-points" : [
+              -36.6953125,
+              -25.734375
             ]
           }
         }

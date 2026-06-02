@@ -68,6 +68,29 @@ final class TraktClient {
         }
     }
 
+    struct Ratings: Decodable, Hashable {
+        let rating: Double
+        let votes: Int
+    }
+
+    struct People: Decodable, Hashable {
+        let cast: [CastMember]
+    }
+
+    struct CastMember: Decodable, Hashable, Identifiable {
+        let character: String?
+        let person: Person
+
+        var id: String {
+            "\(person.ids.trakt ?? -1)-\(person.name)-\(character ?? "")"
+        }
+    }
+
+    struct Person: Decodable, Hashable {
+        let name: String
+        let ids: SearchResult.IDs
+    }
+
     // MARK: - API
 
     func searchMovie(query: String, year: Int?) async throws -> SearchResult.Movie? {
@@ -114,5 +137,35 @@ final class TraktClient {
                                   queryItems: [URLQueryItem(name: "extended", value: "full")])
         let (data, _) = try await URLSession.shared.data(for: req)
         return try JSONDecoder().decode(SearchResult.Show.self, from: data)
+    }
+
+    func movieRatings(id: String) async throws -> Ratings {
+        try await ratings(path: "movies", id: id)
+    }
+
+    func showRatings(id: String) async throws -> Ratings {
+        try await ratings(path: "shows", id: id)
+    }
+
+    func moviePeople(id: String) async throws -> People {
+        try await people(path: "movies", id: id)
+    }
+
+    func showPeople(id: String) async throws -> People {
+        try await people(path: "shows", id: id)
+    }
+
+    private func ratings(path: String, id: String) async throws -> Ratings {
+        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let req = makePathRequest("\(path)/\(encodedID)/ratings")
+        let (data, _) = try await URLSession.shared.data(for: req)
+        return try JSONDecoder().decode(Ratings.self, from: data)
+    }
+
+    private func people(path: String, id: String) async throws -> People {
+        let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let req = makePathRequest("\(path)/\(encodedID)/people")
+        let (data, _) = try await URLSession.shared.data(for: req)
+        return try JSONDecoder().decode(People.self, from: data)
     }
 }

@@ -14,7 +14,11 @@ struct SettingsView: View {
 
     private enum Section: String, CaseIterable, Identifiable {
         case general
-        case downloads
+        case locations
+        case queue
+        case organization
+        case seeding
+        case notifications
         case appearance
         case integration
 
@@ -22,30 +26,43 @@ struct SettingsView: View {
         var title: String {
             switch self {
             case .general: return "General"
-            case .downloads: return "Downloads"
+            case .locations: return "Locations"
+            case .queue: return "Queue"
+            case .organization: return "Organization"
+            case .seeding: return "Seeding"
+            case .notifications: return "Notifications"
             case .appearance: return "Appearance"
-            case .integration: return "Integration"
+            case .integration: return "Integrations"
             }
         }
         var symbol: String {
             switch self {
             case .general: return "gear"
-            case .downloads: return "arrow.down.circle"
+            case .locations: return "folder"
+            case .queue: return "line.3.horizontal.decrease.circle"
+            case .organization: return "tray.2"
+            case .seeding: return "dot.radiowaves.left.and.right"
+            case .notifications: return "bell.badge"
             case .appearance: return "dock.rectangle"
             case .integration: return "antenna.radiowaves.left.and.right"
+            }
+        }
+
+        var group: String {
+            switch self {
+            case .general, .notifications:
+                return "App"
+            case .locations, .queue, .organization, .seeding:
+                return "Downloads"
+            case .appearance:
+                return "Interface"
+            case .integration:
+                return "Connections"
             }
         }
     }
 
     @State private var selection: Section? = .general
-    @State private var activeSubsectionID: String?
-    @State private var scrollRequestID: String?
-
-    private struct Subsection: Identifiable, Hashable {
-        let id: String
-        let title: String
-        let symbol: String
-    }
 
     private var currentSelection: Section { selection ?? .general }
 
@@ -59,57 +76,26 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: selection) { _, newSelection in
-            let section = newSelection ?? .general
-            activeSubsectionID = subsections(for: section).first?.id
-            scrollRequestID = activeSubsectionID
-        }
-        .onAppear {
-            let section = selection ?? .general
-            activeSubsectionID = subsections(for: section).first?.id
-        }
     }
 
     private func sectionDescription(_ section: Section) -> String {
         switch section {
         case .general:
             return "Manage general app behavior, maintenance, and updates."
-        case .downloads:
-            return "Control download paths, queue behavior, seeding, and categories."
+        case .locations:
+            return "Choose where downloads live while transferring and after cleanup."
+        case .queue:
+            return "Control how active download slots and stalled transfers are managed."
+        case .organization:
+            return "Manage categories and files that should never be downloaded."
+        case .seeding:
+            return "Automatically remove eligible torrents after their seeding targets are met."
+        case .notifications:
+            return "Choose which important background events should get your attention."
         case .appearance:
             return "Customize Dock icon telemetry and visual display options."
         case .integration:
             return "Configure Web UI, RPC credentials, and magnet link handling."
-        }
-    }
-
-    private func subsections(for section: Section) -> [Subsection] {
-        switch section {
-        case .general:
-            return [
-                Subsection(id: "general.behaviour", title: "Behaviour", symbol: "slider.horizontal.3"),
-                Subsection(id: "general.maintenance", title: "Maintenance", symbol: "wrench.and.screwdriver"),
-                Subsection(id: "general.updates", title: "Updates", symbol: "arrow.triangle.2.circlepath")
-            ]
-        case .downloads:
-            return [
-                Subsection(id: "downloads.default", title: "Default Location", symbol: "folder"),
-                Subsection(id: "downloads.queue", title: "Queue", symbol: "line.3.horizontal.decrease.circle"),
-                Subsection(id: "downloads.seeding", title: "Seeding", symbol: "dot.radiowaves.left.and.right"),
-                Subsection(id: "downloads.destinations", title: "Destinations", symbol: "externaldrive"),
-                Subsection(id: "downloads.categories", title: "Categories", symbol: "tag")
-            ]
-        case .appearance:
-            return [
-                Subsection(id: "appearance.dock", title: "Dock Icon", symbol: "dock.rectangle"),
-                Subsection(id: "appearance.sidebar", title: "Sidebar Labels", symbol: "list.bullet.rectangle")
-            ]
-        case .integration:
-            return [
-                Subsection(id: "integration.web", title: "Web Interface", symbol: "network"),
-                Subsection(id: "integration.rpc", title: "Sonarr/Radarr RPC", symbol: "lock.shield"),
-                Subsection(id: "integration.magnet", title: "Magnet Links", symbol: "link")
-            ]
         }
     }
 
@@ -120,8 +106,14 @@ struct SettingsView: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 8)
 
-            ForEach(Section.allCases) { section in
-                VStack(alignment: .leading, spacing: 4) {
+            ForEach(["App", "Downloads", "Interface", "Connections"], id: \.self) { group in
+                Text(group.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+
+                ForEach(Section.allCases.filter { $0.group == group }) { section in
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             selection = section
@@ -143,40 +135,7 @@ struct SettingsView: View {
                         )
                     }
                     .buttonStyle(.plain)
-
-                    if currentSelection == section {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(subsections(for: section)) { subsection in
-                                Button {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        activeSubsectionID = subsection.id
-                                        scrollRequestID = subsection.id
-                                    }
-                                } label: {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: subsection.symbol)
-                                            .font(.caption)
-                                            .frame(width: 14)
-                                        Text(subsection.title)
-                                            .font(.caption.weight(.medium))
-                                        Spacer(minLength: 0)
-                                    }
-                                    .foregroundStyle(activeSubsectionID == subsection.id ? Color.accentColor : .secondary)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .fill(activeSubsectionID == subsection.id ? Color.accentColor.opacity(0.14) : Color.clear)
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.leading, 18)
-                        .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
-                    }
                 }
-                .animation(.easeInOut(duration: 0.22), value: currentSelection)
             }
 
             Spacer()
@@ -215,18 +174,90 @@ struct SettingsView: View {
             Group {
                 switch currentSelection {
                 case .general:
-                    GeneralSettingsTab(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID)
-                case .downloads:
-                    DownloadsSettingsTab(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID)
+                    GeneralSettingsTab(activeSubsectionID: .constant(nil), scrollRequestID: .constant(nil))
+                case .locations:
+                    DownloadsSettingsTab(focus: .locations, activeSubsectionID: .constant(nil), scrollRequestID: .constant(nil))
+                case .queue:
+                    DownloadsSettingsTab(focus: .queue, activeSubsectionID: .constant(nil), scrollRequestID: .constant(nil))
+                case .organization:
+                    DownloadsSettingsTab(focus: .organization, activeSubsectionID: .constant(nil), scrollRequestID: .constant(nil))
+                case .seeding:
+                    DownloadsSettingsTab(focus: .seeding, activeSubsectionID: .constant(nil), scrollRequestID: .constant(nil))
+                case .notifications:
+                    NotificationSettingsTab()
                 case .appearance:
-                    AppearanceSettingsTab(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID)
+                    AppearanceSettingsTab(activeSubsectionID: .constant(nil), scrollRequestID: .constant(nil))
                 case .integration:
-                    IntegrationSettingsTab(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID)
+                    IntegrationSettingsTab(activeSubsectionID: .constant(nil), scrollRequestID: .constant(nil))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+// MARK: - Notifications
+
+private struct NotificationSettingsTab: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                SettingsCard(
+                    title: "Notifications",
+                    symbol: "bell.badge",
+                    subtitle: "Allow swiftTorrent to tell you when background transfers need attention."
+                ) {
+                    Toggle("Allow notifications", isOn: notificationsEnabled)
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        notificationToggle("Download completed", detail: "A torrent finished downloading.", isOn: $settings.notifyCompletion)
+                        notificationToggle("NAS disconnected", detail: "A network volume used by a torrent is unreachable.", isOn: $settings.notifyNASDisconnected)
+                        notificationToggle("Download stalled", detail: "An idle torrent crossed the configured queue timeout.", isOn: $settings.notifyStalledDownload)
+                        notificationToggle("Cleanup failed", detail: "Files could not be moved into their organized destination.", isOn: $settings.notifyCleanupFailure)
+                        notificationToggle("Torrent auto-removed", detail: "A torrent met its seeding limit and was removed from the list.", isOn: $settings.notifyAutoRemove)
+                    }
+                    .disabled(!settings.notificationsEnabled)
+                }
+            }
+            .padding(24)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var notificationsEnabled: Binding<Bool> {
+        Binding {
+            settings.notificationsEnabled
+        } set: { enabled in
+            guard enabled else {
+                settings.notificationsEnabled = false
+                return
+            }
+            Task {
+                let granted = await AppNotificationCenter.shared.requestAuthorization()
+                await MainActor.run {
+                    settings.notificationsEnabled = granted
+                }
+            }
+        }
+    }
+
+    private func notificationToggle(_ title: String, detail: String, isOn: Binding<Bool>) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+        }
     }
 }
 
@@ -340,7 +371,15 @@ private struct GeneralSettingsTab: View {
 
 // MARK: - Downloads
 
+private enum DownloadsSettingsFocus {
+    case locations
+    case queue
+    case organization
+    case seeding
+}
+
 private struct DownloadsSettingsTab: View {
+    let focus: DownloadsSettingsFocus
     @Binding var activeSubsectionID: String?
     @Binding var scrollRequestID: String?
     @ObservedObject private var settings = AppSettings.shared
@@ -351,27 +390,51 @@ private struct DownloadsSettingsTab: View {
 
     var body: some View {
         SettingsScrollLayout(activeSubsectionID: $activeSubsectionID, scrollRequestID: $scrollRequestID) {
-            SettingsCard(
-                title: "Default Location",
-                symbol: "folder",
-                subtitle: "Where new torrents are saved while they are downloading."
-            ) {
-                folderRow(label: "Download folder",
-                          systemImage: "arrow.down.circle",
-                          url: settings.resolvedDownloadURL,
-                          fallbackPath: settings.downloadPathForDisplay) {
-                    pickFolder { url in try settings.setDownloadURL(url) }
+            if focus == .locations {
+                SettingsCard(
+                    title: "Default Location",
+                    symbol: "folder",
+                    subtitle: "Where new torrents are saved while they are downloading."
+                ) {
+                    folderRow(label: "Download folder",
+                              systemImage: "arrow.down.circle",
+                              url: settings.resolvedDownloadURL,
+                              fallbackPath: settings.downloadPathForDisplay) {
+                        pickFolder { url in try settings.setDownloadURL(url) }
+                    }
                 }
+                .id("downloads.default")
+                .trackedSection(id: "downloads.default")
             }
-            .id("downloads.default")
-            .trackedSection(id: "downloads.default")
 
-            SettingsCard(
+            if focus == .queue {
+                SettingsCard(
                 title: "Queue",
                 symbol: "line.3.horizontal.decrease.circle",
                 subtitle: "Torrents beyond this limit stay queued until an active slot becomes available."
             ) {
                 VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Queue management")
+                            Text("Automatic mode promotes nearly finished downloads first.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Picker("Queue management", selection: $settings.queueManagementMode) {
+                            Text("Automatic").tag("automatic")
+                            Text("Manual").tag("manual")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 180)
+                    }
+
+                    Divider()
+
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Max active downloads")
@@ -419,13 +482,27 @@ private struct DownloadsSettingsTab: View {
                     }
                 }
             }
-            .id("downloads.queue")
-            .trackedSection(id: "downloads.queue")
+                .id("downloads.queue")
+                .trackedSection(id: "downloads.queue")
+            }
 
-            SettingsCard(
+            if focus == .organization {
+                SettingsCard(
+                title: "File Exclusions",
+                symbol: "nosign",
+                subtitle: "Skip specific file extensions for every torrent or only selected categories."
+            ) {
+                FileExclusionRulesSettingsView()
+            }
+                .id("downloads.exclusions")
+                .trackedSection(id: "downloads.exclusions")
+            }
+
+            if focus == .seeding {
+                SettingsCard(
                 title: "Seeding",
                 symbol: "dot.radiowaves.left.and.right",
-                subtitle: "Automatically remove torrents from the list after seeding thresholds. Sonarr/Radarr-managed torrents are excluded."
+                subtitle: "Automatically remove torrents locally after seeding thresholds. Sonarr and Radarr are not sent removal events."
             ) {
                 VStack(alignment: .leading, spacing: 12) {
                     Toggle("Auto-remove after seeding time", isOn: $settings.autoRemoveAfterSeedTime)
@@ -457,10 +534,12 @@ private struct DownloadsSettingsTab: View {
                     }
                 }
             }
-            .id("downloads.seeding")
-            .trackedSection(id: "downloads.seeding")
+                .id("downloads.seeding")
+                .trackedSection(id: "downloads.seeding")
+            }
 
-            SettingsCard(
+            if focus == .locations {
+                SettingsCard(
                 title: "Destinations",
                 symbol: "externaldrive",
                 subtitle: "Completed downloads are moved here when auto-cleanup is enabled. These destinations back the built-in Movies and TV categories."
@@ -479,10 +558,12 @@ private struct DownloadsSettingsTab: View {
                     }
                 }
             }
-            .id("downloads.destinations")
-            .trackedSection(id: "downloads.destinations")
+                .id("downloads.destinations")
+                .trackedSection(id: "downloads.destinations")
+            }
 
-            SettingsCard(
+            if focus == .organization {
+                SettingsCard(
                 title: "Categories",
                 symbol: "tag",
                 subtitle: "Manage torrent categories."
@@ -554,8 +635,9 @@ private struct DownloadsSettingsTab: View {
                     }
                 }
             }
-            .id("downloads.categories")
-            .trackedSection(id: "downloads.categories")
+                .id("downloads.categories")
+                .trackedSection(id: "downloads.categories")
+            }
 
             if let errorText {
                 SettingsCard(title: "Folder Access", subtitle: "Folder selection failed.") {
@@ -608,6 +690,103 @@ private struct DownloadsSettingsTab: View {
     private func shortenPath(_ path: String?) -> String {
         guard let path else { return "Not set" }
         return path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+    }
+}
+
+private struct FileExclusionRulesSettingsView: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @State private var newExtension = ""
+    @State private var newCategoryIDs: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                TextField(".exe", text: $newExtension)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 110)
+                scopeMenu(categoryIDs: newCategoryIDs) { newCategoryIDs = $0 }
+                Spacer()
+                Button("Add") {
+                    settings.addFileExclusionRule(fileExtension: newExtension, categoryIDs: newCategoryIDs)
+                    newExtension = ""
+                    newCategoryIDs = []
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(normalizedExtension(newExtension) == nil)
+            }
+
+            if settings.fileExclusionRules.isEmpty {
+                Text("No explicit exclusions. Add an extension such as .exe to prevent it from downloading.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Divider()
+                VStack(spacing: 10) {
+                    ForEach(settings.fileExclusionRules) { rule in
+                        HStack(spacing: 10) {
+                            Text(".\(rule.fileExtension)")
+                                .font(.body.monospaced())
+                                .frame(width: 90, alignment: .leading)
+                            scopeMenu(categoryIDs: rule.categoryIDs) {
+                                settings.setFileExclusionRuleCategories(id: rule.id, categoryIDs: $0)
+                            }
+                            Spacer()
+                            Button(role: .destructive) {
+                                settings.removeFileExclusionRule(id: rule.id)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func scopeMenu(categoryIDs: Set<String>, onChange: @escaping (Set<String>) -> Void) -> some View {
+        Menu {
+            Button {
+                onChange([])
+            } label: {
+                Label("All Categories", systemImage: categoryIDs.isEmpty ? "checkmark" : "circle")
+            }
+
+            Divider()
+
+            ForEach(settings.categoryDefinitionsForUI) { category in
+                Button {
+                    var updated = categoryIDs
+                    if updated.contains(category.id) {
+                        updated.remove(category.id)
+                    } else {
+                        updated.insert(category.id)
+                    }
+                    onChange(updated)
+                } label: {
+                    Label(category.title, systemImage: categoryIDs.contains(category.id) ? "checkmark" : category.symbol)
+                }
+            }
+        } label: {
+            Label(scopeLabel(categoryIDs), systemImage: categoryIDs.isEmpty ? "square.stack.3d.up" : "tag")
+        }
+        .menuStyle(.borderlessButton)
+        .frame(minWidth: 160, alignment: .leading)
+    }
+
+    private func scopeLabel(_ categoryIDs: Set<String>) -> String {
+        if categoryIDs.isEmpty { return "All Categories" }
+        let titles = settings.categoryDefinitionsForUI
+            .filter { categoryIDs.contains($0.id) }
+            .map(\.title)
+        return titles.isEmpty ? "\(categoryIDs.count) Categories" : titles.joined(separator: ", ")
+    }
+
+    private func normalizedExtension(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let ext = trimmed.hasPrefix(".") ? String(trimmed.dropFirst()) : trimmed
+        guard !ext.isEmpty, ext.allSatisfy({ $0.isLetter || $0.isNumber }) else { return nil }
+        return ext
     }
 }
 

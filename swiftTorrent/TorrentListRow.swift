@@ -11,6 +11,8 @@ struct TorrentListRow: View {
     let t: TorrentRow
     @ObservedObject var engine: TorrentEngine
 
+    private var isBoosted: Bool { engine.isBoosted(torrentID: t.id) }
+
     var body: some View {
         HStack(spacing: 14) {
 
@@ -25,6 +27,7 @@ struct TorrentListRow: View {
                 if shouldShowProgressBar {
                     ProgressView(value: t.progress)
                         .animation(nil, value: t.progress)
+                        .tint(isBoosted ? .orange : .accentColor)
                 }
 
                 if let statusLine = statusLineText {
@@ -41,11 +44,14 @@ struct TorrentListRow: View {
 
             peersView
             speedView
+            if canBoost {
+                queueControls
+            }
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
         .background {
-            TorrentWindOverlay(t: t)
+            TorrentWindOverlay(t: t, isBoosted: isBoosted)
                 .allowsHitTesting(false)
         }
         .onAppear {
@@ -193,6 +199,22 @@ struct TorrentListRow: View {
         .frame(width: 130, alignment: .trailing)
     }
 
+    private var queueControls: some View {
+        Button {
+            engine.toggleBoost(torrentID: t.id)
+        } label: {
+            BoostRocketIcon(isActive: isBoosted)
+                .frame(width: 18, height: 18)
+        }
+        .buttonStyle(.plain)
+        .help(isBoosted ? "Stop boosting this torrent" : "Temporarily boost this torrent")
+        .frame(width: 26, alignment: .trailing)
+    }
+
+    private var canBoost: Bool {
+        !t.isSeeding && t.state != 5 && t.progress < 0.999
+    }
+
     // MARK: - ETA
 
     private func etaString() -> String? {
@@ -233,6 +255,159 @@ struct TorrentListRow: View {
 
     private func plural(_ value: Int, one: String, many: String) -> String {
         value == 1 ? one : many
+    }
+}
+
+private struct BoostRocketIcon: View {
+    let isActive: Bool
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let phase = timeline.date.timeIntervalSinceReferenceDate
+
+            ZStack {
+                if isActive {
+                    RocketExhaustFlame(phase: phase)
+                        .mask(alignment: .bottom) {
+                            Rectangle()
+                                .frame(width: 10, height: 15)
+                        }
+                        .offset(y: 8.5)
+                }
+
+                RocketGlyphShape()
+                    .fill(isActive ? Color.white : Color.secondary.opacity(0.42), style: FillStyle(eoFill: true))
+
+            }
+        }
+        .accessibilityLabel(isActive ? "Boosted" : "Boost")
+    }
+
+}
+
+private struct RocketExhaustFlame: View {
+    let phase: TimeInterval
+
+    var body: some View {
+        ZStack {
+            FlameShape()
+                .fill(
+                    LinearGradient(colors: [.yellow, .orange, .red.opacity(0.45), .clear], startPoint: .top, endPoint: .bottom)
+                )
+                .frame(width: 9, height: 15 + CGFloat(sin(phase * 18) * 2))
+
+            FlameShape()
+                .fill(
+                    LinearGradient(colors: [.white.opacity(0.95), .yellow, .orange.opacity(0.2)], startPoint: .top, endPoint: .bottom)
+                )
+                .frame(width: 4, height: 9 + CGFloat(cos(phase * 22) * 1.5))
+                .offset(y: -1)
+        }
+        .offset(
+            x: CGFloat(sin(phase * 18) * 1.2),
+            y: CGFloat((sin(phase * 11) + sin(phase * 17) * 0.55) * 1.35)
+        )
+        .blur(radius: 0.25)
+    }
+}
+
+private struct FlameShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.addCurve(
+            to: CGPoint(x: rect.minX, y: rect.minY),
+            control1: CGPoint(x: rect.minX + rect.width * 0.14, y: rect.maxY * 0.72),
+            control2: CGPoint(x: rect.minX, y: rect.midY)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY),
+            control: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.28)
+        )
+        path.addCurve(
+            to: CGPoint(x: rect.midX, y: rect.maxY),
+            control1: CGPoint(x: rect.maxX, y: rect.midY),
+            control2: CGPoint(x: rect.maxX - rect.width * 0.14, y: rect.maxY * 0.72)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct RocketGlyphShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w = rect.width
+        let h = rect.height
+
+        path.move(to: CGPoint(x: w * 0.50, y: h * 0.03))
+        path.addCurve(
+            to: CGPoint(x: w * 0.72, y: h * 0.56),
+            control1: CGPoint(x: w * 0.70, y: h * 0.12),
+            control2: CGPoint(x: w * 0.76, y: h * 0.36)
+        )
+        path.addCurve(
+            to: CGPoint(x: w * 0.93, y: h * 0.89),
+            control1: CGPoint(x: w * 0.82, y: h * 0.67),
+            control2: CGPoint(x: w * 0.90, y: h * 0.80)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: w * 0.67, y: h * 0.79),
+            control: CGPoint(x: w * 0.79, y: h * 0.84)
+        )
+        path.addLine(to: CGPoint(x: w * 0.59, y: h * 0.91))
+        path.addQuadCurve(
+            to: CGPoint(x: w * 0.41, y: h * 0.91),
+            control: CGPoint(x: w * 0.50, y: h * 0.98)
+        )
+        path.addLine(to: CGPoint(x: w * 0.33, y: h * 0.79))
+        path.addQuadCurve(
+            to: CGPoint(x: w * 0.07, y: h * 0.89),
+            control: CGPoint(x: w * 0.21, y: h * 0.84)
+        )
+        path.addCurve(
+            to: CGPoint(x: w * 0.28, y: h * 0.56),
+            control1: CGPoint(x: w * 0.10, y: h * 0.80),
+            control2: CGPoint(x: w * 0.18, y: h * 0.67)
+        )
+        path.addCurve(
+            to: CGPoint(x: w * 0.50, y: h * 0.04),
+            control1: CGPoint(x: w * 0.24, y: h * 0.36),
+            control2: CGPoint(x: w * 0.30, y: h * 0.12)
+        )
+        path.closeSubpath()
+
+        path.addEllipse(in: CGRect(x: w * 0.38, y: h * 0.24, width: w * 0.24, height: w * 0.24))
+        path.closeSubpath()
+        return path
+    }
+}
+
+struct BoostedRowGlow: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [.red.opacity(0.20), .orange.opacity(0.34), .yellow.opacity(0.16), .orange.opacity(0.28)],
+                        startPoint: .bottomLeading,
+                        endPoint: .topTrailing
+                    )
+                )
+                .blur(radius: 13)
+                .padding(-5)
+
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [.red.opacity(0.28), .orange.opacity(0.70), .yellow.opacity(0.46), .orange.opacity(0.35)],
+                        startPoint: .bottomLeading,
+                        endPoint: .topTrailing
+                    ),
+                    lineWidth: 1.2
+                )
+                .blur(radius: 1.4)
+        }
     }
 }
 

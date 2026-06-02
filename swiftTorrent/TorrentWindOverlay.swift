@@ -10,6 +10,7 @@ import Foundation
 
 struct TorrentWindOverlay: View {
     let t: TorrentRow
+    let isBoosted: Bool
 
     private var mode: Mode? {
         if t.isPaused { return nil }
@@ -23,9 +24,10 @@ struct TorrentWindOverlay: View {
             if let mode {
                 WindArrowsField(
                     direction: mode.direction,
-                    speed: mode.speed
+                    speed: mode.speed * (isBoosted ? 2.2 : 1.0),
+                    intensity: 1.0
                 )
-                .opacity(0.40)
+                .opacity(isBoosted ? 0.56 : 0.40)
                 .mask(
                     LinearGradient(
                         colors: [.clear, .black, .black, .clear],

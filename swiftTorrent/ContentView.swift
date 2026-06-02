@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var hostWindow: NSWindow?
     @State private var recentPanel = RecentDownloadsPanelController()
     @State private var resizeStartWidth: CGFloat?
+    @Namespace private var torrentLaunchAnimation
     @AppStorage("swiftTorrent.ui.inspectorWidth") private var inspectorStoredWidth: Double = 340
     private let inspectorMinWidth: CGFloat = 320
     private let inspectorMaxWidth: CGFloat = 520
@@ -248,7 +249,16 @@ struct ContentView: View {
         TorrentListRow(t: t, engine: engine)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(selectionBackground(for: t))
+            .background {
+                ZStack {
+                    if engine.isBoosted(torrentID: t.id) {
+                        BoostedRowGlow()
+                            .allowsHitTesting(false)
+                    }
+                    selectionBackground(for: t)
+                }
+            }
+            .matchedGeometryEffect(id: "torrent-\(t.id)", in: torrentLaunchAnimation)
             .animation(.spring(response: 0.26, dampingFraction: 0.82), value: selectedTorrentIDs.contains(t.id))
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .onTapGesture {
@@ -275,6 +285,18 @@ struct ContentView: View {
                     }
                 } label: {
                     Label("Show in Finder", systemImage: "folder")
+                }
+                Button {
+                    for id in targets {
+                        engine.organizeNow(torrentID: id)
+                    }
+                } label: {
+                    Label(targets.count > 1 ? "Organize Selected" : "Organize Now", systemImage: "arrow.trianglehead.branch")
+                }
+                Button {
+                    organizeTargets(targets, choosingDestination: true)
+                } label: {
+                    Label(targets.count > 1 ? "Organize Selected to Folder…" : "Organize to Folder…", systemImage: "folder.badge.plus")
                 }
                 Divider()
                 Button("Remove…", role: .destructive) {
@@ -330,6 +352,22 @@ struct ContentView: View {
     private func showSelectedInFinder() {
         for id in selectedTorrentIDs {
             engine.showInFinder(torrentID: id)
+        }
+    }
+
+    private func organizeTargets(_ targets: Set<String>, choosingDestination: Bool) {
+        var destination: URL?
+        if choosingDestination {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.prompt = "Organize Here"
+            guard panel.runModal() == .OK else { return }
+            destination = panel.url
+        }
+        for id in targets {
+            engine.organizeNow(torrentID: id, destinationOverride: destination)
         }
     }
 
@@ -398,6 +436,7 @@ struct ContentView: View {
         var other: [TorrentRow] = []
 
         for t in engine.torrents {
+            guard !engine.isBoosted(torrentID: t.id) else { continue }
             let c = settings.normalizedCategoryValue(t.category) ?? normalizeCategory(t.category)
 
             if c == "tv" {
@@ -420,6 +459,10 @@ struct ContentView: View {
         engine.torrents
     }
 
+    private var boostedTorrent: TorrentRow? {
+        engine.torrents.first { engine.isBoosted(torrentID: $0.id) }
+    }
+
     private func stableKey(for torrent: TorrentRow) -> String {
         MagnetKeyExtractor.key(from: torrent.id) ?? torrent.id
     }
@@ -436,6 +479,10 @@ struct ContentView: View {
 
     private func sortTorrents(_ torrents: [TorrentRow]) -> [TorrentRow] {
         torrents.sorted { lhs, rhs in
+            let lhsBoosted = engine.isBoosted(torrentID: lhs.id)
+            let rhsBoosted = engine.isBoosted(torrentID: rhs.id)
+            if lhsBoosted != rhsBoosted { return lhsBoosted }
+
             let lhsRank = statusSortRank(lhs)
             let rhsRank = statusSortRank(rhs)
             if lhsRank != rhsRank { return lhsRank < rhsRank }
@@ -458,6 +505,11 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if let boostedTorrent {
+                        torrentRow(boostedTorrent)
+                            .zIndex(1)
+                    }
+
                     if !grouped.tv.isEmpty {
                         sidebarSection(title: tvCategory.title, symbol: tvCategory.symbol, torrents: grouped.tv)
                     }
@@ -471,6 +523,7 @@ struct ContentView: View {
                     }
                 }
                 .padding(16)
+                .animation(.spring(response: 0.54, dampingFraction: 0.74), value: engine.boostedTorrentKey)
             }
             .scrollClipDisabled()
         }
@@ -502,6 +555,7 @@ struct ContentView: View {
                     torrentRow(t)
                 }
             }
+            .animation(.spring(response: 0.52, dampingFraction: 0.76), value: engine.boostedTorrentKey)
         }
     }
 
@@ -921,6 +975,7 @@ private final class FocuslessHostingView<Content: View>: NSHostingView<Content> 
 
 private struct RecentDownloadsPanelView: View {
     @ObservedObject private var settings = AppSettings.shared
+    @State private var searchText = ""
     private let relativeDateTimeFormatter = RelativeDateTimeFormatter()
     private var panelShape: UnevenRoundedRectangle {
         UnevenRoundedRectangle(
@@ -939,14 +994,18 @@ private struct RecentDownloadsPanelView: View {
             .padding(.horizontal, 12)
             .padding(.top, 12)
 
-            if settings.recentDownloads.isEmpty {
+            TextField("Search history", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 12)
+
+            if filteredDownloads.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "square.and.arrow.down")
                         .font(.title2)
                         .foregroundStyle(.secondary)
-                    Text("No recent completions")
+                    Text(searchText.isEmpty ? "No recent completions" : "No matching completions")
                         .font(.subheadline.weight(.semibold))
-                    Text("Completed torrents will appear here with posters and timings.")
+                    Text(searchText.isEmpty ? "Completed torrents will appear here with posters and timings." : "Try a different title, source, destination, or outcome.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -956,7 +1015,7 @@ private struct RecentDownloadsPanelView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(Array(settings.recentDownloads.prefix(60)), id: \.id) { item in
+                        ForEach(Array(filteredDownloads.prefix(60)), id: \.id) { item in
                             recentDownloadRow(item)
                                 .contextMenu {
                                     Button(role: .destructive) {
@@ -1016,9 +1075,21 @@ private struct RecentDownloadsPanelView: View {
                 Text(item.typeLabel)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                if let source = item.source {
+                    Text("Source: \(source)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
                 Text(durationLabel(item))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if let destination = item.cleanedDestinationPath {
+                    Text(destination)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
                 Text(relativeDateTimeFormatter.localizedString(for: item.completedAt, relativeTo: Date()))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -1027,6 +1098,20 @@ private struct RecentDownloadsPanelView: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
+    }
+
+    private var filteredDownloads: [RecentDownloadItem] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return settings.recentDownloads }
+        return settings.recentDownloads.filter { item in
+            [
+                item.title,
+                item.torrentName,
+                item.outcome,
+                item.source ?? "",
+                item.cleanedDestinationPath ?? ""
+            ].contains { $0.localizedCaseInsensitiveContains(query) }
+        }
     }
 
     @ViewBuilder

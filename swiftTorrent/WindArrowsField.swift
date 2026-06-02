@@ -12,6 +12,7 @@ struct WindArrowsField: View {
 
     let direction: Direction
     let speed: Double
+    let intensity: Double
 
     struct Particle: Hashable {
         let x: CGFloat
@@ -43,7 +44,7 @@ struct WindArrowsField: View {
 
                 let symbolName = (direction == .down) ? "arrow.down" : "arrow.up"
                 let symbolText = Text(Image(systemName: symbolName))
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: intensity > 1 ? 15 : 13, weight: intensity > 1 ? .black : .bold))
                 let resolved = context.resolve(symbolText)
 
                 let t = timeline.date.timeIntervalSinceReferenceDate
@@ -85,7 +86,7 @@ struct WindArrowsField: View {
 
         // Density knob: lower = more dense
         // This is still “busy” but way cheaper than regenerating every frame.
-        let count = max(45, Int(size.width / 9))
+        let count = max(45, Int((size.width / 9) * intensity))
 
         var rng = SeededGenerator(seed: seed == 0 ? 1 : seed)
         var out: [Particle] = []
@@ -95,8 +96,8 @@ struct WindArrowsField: View {
             let x = CGFloat.random(in: 0...size.width, using: &rng)
             let y = CGFloat.random(in: 0...size.height, using: &rng)
 
-            let alpha = Double.random(in: 0.10...0.32, using: &rng)
-            let scale = CGFloat.random(in: 0.60...1.20, using: &rng)
+            let alpha = Double.random(in: 0.10...(0.32 * intensity), using: &rng)
+            let scale = CGFloat.random(in: 0.60...(1.20 * intensity), using: &rng)
 
             // Drift is “fractions of row height per cycle”
             let drift = CGFloat.random(in: 0.55...1.35, using: &rng)

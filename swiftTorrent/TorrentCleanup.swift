@@ -19,6 +19,18 @@ enum TorrentCleanup {
         var collision: Collision = .rename
     }
 
+    struct PlannedFile: Identifiable, Hashable {
+        var id: String { source.path }
+        let source: URL
+        let destination: URL
+    }
+
+    struct CleanupPlan: Hashable {
+        let destinationFolder: URL
+        let files: [PlannedFile]
+        let strippedTopLevelFolder: String?
+    }
+
     enum CleanupError: Error, LocalizedError {
         case noFiles
         case noDestination
@@ -48,11 +60,50 @@ enum TorrentCleanup {
         category: String?,
         settings: CleanupSettings
     ) throws -> URL {
+        let plan = try preview(
+            saveRoot: saveRoot,
+            filePaths: filePaths,
+            meta: meta,
+            parsedSeason: parsedSeason,
+            category: category,
+            settings: settings
+        )
 
+        try FileManager.default.createDirectory(at: plan.destinationFolder, withIntermediateDirectories: true)
+
+        let fm = FileManager.default
+        var movedAnything = false
+        for plannedFile in plan.files {
+            guard fm.fileExists(atPath: plannedFile.source.path) else { continue }
+            try fm.createDirectory(at: plannedFile.destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let finalDst = try resolveCollision(plannedFile.destination, collision: settings.collision)
+            if settings.mode == .copy {
+                try copyItem(at: plannedFile.source, to: finalDst)
+            } else {
+                try moveItem(at: plannedFile.source, to: finalDst)
+            }
+            movedAnything = true
+        }
+
+        if movedAnything, let top = plan.strippedTopLevelFolder {
+            removeFolderIfEmpty(saveRoot.appendingPathComponent(top, isDirectory: true))
+        }
+
+        return plan.destinationFolder
+    }
+
+    static func preview(
+        saveRoot: URL,
+        filePaths: [String],
+        meta: MediaMetadata,
+        parsedSeason: Int?,
+        category: String?,
+        settings: CleanupSettings
+    ) throws -> CleanupPlan {
         let rels = filePaths
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-            .filter { !AppSettings.shared.autoFilterNonMediaFiles || MediaFileFilter.shouldAllow(path: $0) }
+            .filter { AppSettings.shared.shouldDownloadFile(path: $0, category: category) }
 
         guard !rels.isEmpty else { throw CleanupError.noFiles }
 
@@ -72,60 +123,25 @@ enum TorrentCleanup {
             dest = dest.appendingPathComponent("Season \(String(format: "%02d", season))", isDirectory: true)
         }
 
-        try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-
-        // Identify if the torrent uses a single top-level folder like "Dont.Look.Up.../file.mkv"
         let topLevels = Set(rels.compactMap { firstPathComponent(of: $0) })
         let hasSingleTopLevelFolder = (topLevels.count == 1) && rels.allSatisfy { $0.contains("/") || $0.contains("\\") }
         let singleTop = hasSingleTopLevelFolder ? topLevels.first : nil
 
-        // We will move either:
-        // - contents of the single top folder (strip it off), OR
-        // - each file directly under saveRoot preserving relative layout
-        let fm = FileManager.default
-        var movedAnything = false
-
-        for rel in rels {
+        let plannedFiles = rels.compactMap { rel -> PlannedFile? in
             let normRel = normalizeRelative(rel)
-            guard !normRel.isEmpty else { continue }
-
+            guard !normRel.isEmpty else { return nil }
             let src = saveRoot.appendingPathComponent(normRel, isDirectory: false)
-            guard fm.fileExists(atPath: src.path) else {
-                continue // not present yet, skip
-            }
-
             let destRel: String
             if let top = singleTop {
-                // Strip "TopFolder/" so we don't nest the release folder
                 destRel = stripLeadingComponent(normRel, topComponent: top)
             } else {
                 destRel = normRel
             }
-
-            let dst = dest.appendingPathComponent(destRel, isDirectory: false)
-
-            // Ensure parent folder exists
-            let parent = dst.deletingLastPathComponent()
-            try fm.createDirectory(at: parent, withIntermediateDirectories: true)
-
-            let finalDst = try resolveCollision(dst, collision: settings.collision)
-
-            if settings.mode == .copy {
-                try copyItem(at: src, to: finalDst)
-            } else {
-                try moveItem(at: src, to: finalDst)
-            }
-
-            movedAnything = true
+            guard !destRel.isEmpty else { return nil }
+            let destination = dest.appendingPathComponent(destRel, isDirectory: false)
+            return PlannedFile(source: src, destination: previewCollision(destination, collision: settings.collision))
         }
-
-        // Remove now-empty single top-level folder (release folder) if we stripped it
-        if movedAnything, let top = singleTop {
-            let releaseFolder = saveRoot.appendingPathComponent(top, isDirectory: true)
-            removeFolderIfEmpty(releaseFolder)
-        }
-
-        return dest
+        return CleanupPlan(destinationFolder: dest, files: plannedFiles, strippedTopLevelFolder: singleTop)
     }
 
     // MARK: - Helpers
@@ -197,6 +213,23 @@ enum TorrentCleanup {
                 if !fm.fileExists(atPath: candidate.path) { return candidate }
                 i += 1
             }
+        }
+    }
+
+    private static func previewCollision(_ dst: URL, collision: Collision) -> URL {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: dst.path) else { return dst }
+        guard case .rename = collision else { return dst }
+
+        let base = dst.deletingPathExtension().lastPathComponent
+        let ext = dst.pathExtension
+        let dir = dst.deletingLastPathComponent()
+        var index = 2
+        while true {
+            let name = ext.isEmpty ? "\(base) (\(index))" : "\(base) (\(index)).\(ext)"
+            let candidate = dir.appendingPathComponent(name)
+            if !fm.fileExists(atPath: candidate.path) { return candidate }
+            index += 1
         }
     }
 

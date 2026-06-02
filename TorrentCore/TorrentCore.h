@@ -64,6 +64,12 @@ bool st_torrent_set_file_wanted(
     int32_t file_index,
     bool wanted
 );
+bool st_torrent_set_file_priority(
+    STSessionRef session,
+    const char* torrent_id_hex,
+    int32_t file_index,
+    bool prioritized
+);
 
 // File list
 int32_t st_get_torrent_file_count(STSessionRef session, int32_t torrent_index);
@@ -76,7 +82,8 @@ bool st_get_torrent_file_info(
     const char** out_path,
     int64_t* out_size,
     int64_t* out_done,
-    bool* out_wanted
+    bool* out_wanted,
+    bool* out_prioritized
 );
 
 #ifdef __cplusplus

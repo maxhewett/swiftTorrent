@@ -39,6 +39,13 @@ struct TorrentRow: Identifiable, Hashable {
     var category: String?
 }
 
+struct TransferSpeedSample: Identifiable, Hashable {
+    let id = UUID()
+    let activeSecond: TimeInterval
+    let downBps: Int
+    let upBps: Int
+}
+
 #if canImport(AppKit)
 private enum DockOverlayMetricMode: String, CaseIterable {
     case both
@@ -146,6 +153,7 @@ struct TorrentFile: Identifiable, Hashable {
     let size: Int64
     let done: Int64
     let isWanted: Bool
+    let isPrioritized: Bool
 
     var isSkipped: Bool { !isWanted }
 
@@ -182,6 +190,7 @@ final class TorrentEngine: ObservableObject {
     @Published var mediaByTorrentID: [String: MediaMetadata] = [:]
     @Published var metadataLookupStateByID: [String: MetadataLookupState] = [:]
     @Published var metadataCandidatesByID: [String: [MetadataCandidate]] = [:]
+    @Published private(set) var transferSpeedSamplesByID: [String: [TransferSpeedSample]] = [:]
     @Published var userFacingError: String?
 
     private var lastProgressByID: [String: Double] = [:]
@@ -190,7 +199,10 @@ final class TorrentEngine: ObservableObject {
     private var idleObservedAtByStableKey: [String: Date] = [:]
     private var idleAutoPausedAtByStableKey: [String: Date] = [:]
     private var idleAutoPausedKeys: Set<String> = []
+    private var stalledNotificationKeys: Set<String> = []
+    private var unavailableNASPaths: Set<String> = []
     private var didBootstrapCompletionTracking = false
+    private var activeTransferSecondsByStableKey: [String: TimeInterval] = [:]
 
     private var session: STSessionRef?
     private var timer: Timer?
@@ -203,6 +215,10 @@ final class TorrentEngine: ObservableObject {
     // Newly added torrents that should be resumed once they appear with a live ID.
     private var pendingAutoResumeKeys: Set<String> = []
     private var fileFilterAppliedKeys: Set<String> = []
+    private var automaticallyExcludedFiles: Set<String> = []
+    private var appliedFileExclusionRules: [FileExclusionRule] = []
+    private var appliedAutoFilterNonMediaFiles = true
+    @Published private(set) var boostedTorrentKey: String?
 
     // MARK: - Pause persistence (by STORED torrent key)
     private let pausedKeysDefaultsKey = "swiftTorrent.pausedTorrentKeys"
@@ -211,6 +227,10 @@ final class TorrentEngine: ObservableObject {
 
     func isQueued(torrentID: String) -> Bool {
         queuedTorrentKeys.contains(stableKey(forLiveTorrentID: torrentID))
+    }
+
+    func isBoosted(torrentID: String) -> Bool {
+        boostedTorrentKey == stableKey(forLiveTorrentID: torrentID)
     }
 
     init() {
@@ -293,6 +313,10 @@ final class TorrentEngine: ObservableObject {
         overrideHint(forLiveTorrentID: torrentID)
     }
 
+    func sourceLabel(for torrentID: String) -> String {
+        arrHint(forLiveTorrentID: torrentID)?.source.rawValue.capitalized ?? "Manual"
+    }
+
     // MARK: - Files
 
     func refreshFiles(for torrentID: String) {
@@ -314,10 +338,11 @@ final class TorrentEngine: ObservableObject {
             var size: Int64 = 0
             var done: Int64 = 0
             var wanted = true
+            var prioritized = false
 
-            let ok = st_get_torrent_file_info(session, Int32(idx), Int32(i), &cPath, &size, &done, &wanted)
+            let ok = st_get_torrent_file_info(session, Int32(idx), Int32(i), &cPath, &size, &done, &wanted, &prioritized)
             if ok, let cPath {
-                out.append(TorrentFile(id: i, path: String(cString: cPath), size: size, done: done, isWanted: wanted))
+                out.append(TorrentFile(id: i, path: String(cString: cPath), size: size, done: done, isWanted: wanted, isPrioritized: prioritized))
             }
         }
 
@@ -325,7 +350,16 @@ final class TorrentEngine: ObservableObject {
     }
 
     private func applyAutomaticFileFilterIfNeeded(current: [TorrentRow], storedItems: [StoredTorrent]) {
-        guard AppSettings.shared.autoFilterNonMediaFiles, let session else { return }
+        let settings = AppSettings.shared
+        guard settings.autoFilterNonMediaFiles || !settings.fileExclusionRules.isEmpty || !automaticallyExcludedFiles.isEmpty,
+              let session else { return }
+
+        if appliedFileExclusionRules != settings.fileExclusionRules ||
+            appliedAutoFilterNonMediaFiles != settings.autoFilterNonMediaFiles {
+            appliedFileExclusionRules = settings.fileExclusionRules
+            appliedAutoFilterNonMediaFiles = settings.autoFilterNonMediaFiles
+            fileFilterAppliedKeys.removeAll()
+        }
 
         for row in current {
             let stable = stableKey(forLiveTorrentID: row.id, items: storedItems)
@@ -342,15 +376,25 @@ final class TorrentEngine: ObservableObject {
                 var size: Int64 = 0
                 var done: Int64 = 0
                 var wanted = true
-                guard st_get_torrent_file_info(session, Int32(row.coreIndex), Int32(index), &cPath, &size, &done, &wanted),
+                var prioritized = false
+                guard st_get_torrent_file_info(session, Int32(row.coreIndex), Int32(index), &cPath, &size, &done, &wanted, &prioritized),
                       let cPath else { continue }
 
                 sawAnyFile = true
                 let path = String(cString: cPath)
-                if wanted && !MediaFileFilter.shouldAllow(path: path) {
+                let exclusionKey = "\(stable):\(index)"
+                let shouldDownload = settings.shouldDownloadFile(path: path, category: row.category)
+                if wanted && !shouldDownload {
                     _ = row.id.withCString { torrentID in
                         st_torrent_set_file_wanted(session, torrentID, Int32(index), false)
                     }
+                    automaticallyExcludedFiles.insert(exclusionKey)
+                    filteredAny = true
+                } else if !wanted && shouldDownload && automaticallyExcludedFiles.contains(exclusionKey) {
+                    _ = row.id.withCString { torrentID in
+                        st_torrent_set_file_wanted(session, torrentID, Int32(index), true)
+                    }
+                    automaticallyExcludedFiles.remove(exclusionKey)
                     filteredAny = true
                 }
             }
@@ -826,6 +870,9 @@ final class TorrentEngine: ObservableObject {
 
         // Compute stable key early (info-hash if possible)
         let stable = MagnetKeyExtractor.key(from: trimmedMagnet) ?? trimmedMagnet
+        if !restoring, TorrentStore.load().contains(where: { $0.key == stable }) {
+            return "This torrent is already present."
+        }
 
         if persist {
             var items = TorrentStore.load()
@@ -865,7 +912,12 @@ final class TorrentEngine: ObservableObject {
             _ = stable.withCString { st_torrent_pause(s, $0) }
         } else {
             let maxActive = AppSettings.shared.maxActiveDownloads
-            let activeCount = torrents.filter { !$0.isPaused && !$0.isSeeding && $0.progress < 0.999 }.count
+            let activeCount = torrents.filter {
+                !$0.isPaused &&
+                !$0.isSeeding &&
+                $0.progress < 0.999 &&
+                stableKey(forLiveTorrentID: $0.id) != boostedTorrentKey
+            }.count
             if maxActive > 0 && activeCount >= maxActive {
                 queuedTorrentKeys.append(stable)
                 _ = stable.withCString { st_torrent_pause(s, $0) }
@@ -956,6 +1008,52 @@ final class TorrentEngine: ObservableObject {
         poll()
     }
 
+    func toggleBoost(torrentID: String) {
+        let stable = stableKey(forLiveTorrentID: torrentID)
+        if boostedTorrentKey == stable {
+            boostedTorrentKey = nil
+            requeueIfOverActiveLimit(stableKey: stable)
+            poll()
+            return
+        }
+
+        let previousBoostedKey = boostedTorrentKey
+        boostedTorrentKey = stable
+        queuedTorrentKeys.removeAll { $0 == stable }
+        desiredPausedKeys.remove(stable)
+        savePausedKeys(desiredPausedKeys)
+        if let s = session {
+            _ = torrentID.withCString { st_torrent_resume(s, $0) }
+        }
+        if let previousBoostedKey {
+            requeueIfOverActiveLimit(stableKey: previousBoostedKey)
+        }
+        poll()
+    }
+
+    private func requeueIfOverActiveLimit(stableKey: String) {
+        let maxActive = AppSettings.shared.maxActiveDownloads
+        guard maxActive > 0,
+              let s = session,
+              let row = torrents.first(where: { self.stableKey(forLiveTorrentID: $0.id) == stableKey }),
+              !row.isPaused,
+              !row.isSeeding,
+              row.progress < 0.999 else { return }
+
+        let normalActiveCount = torrents.filter {
+            !$0.isPaused &&
+            !$0.isSeeding &&
+            $0.progress < 0.999 &&
+            self.stableKey(forLiveTorrentID: $0.id) != boostedTorrentKey
+        }.count
+        guard normalActiveCount > maxActive else { return }
+
+        _ = row.id.withCString { st_torrent_pause(s, $0) }
+        if !queuedTorrentKeys.contains(stableKey) {
+            queuedTorrentKeys.append(stableKey)
+        }
+    }
+
     func removeTorrent(id: String, deleteFiles: Bool, shouldPoll: Bool = true) {
         guard let s = session else { return }
         let stable = stableKey(forLiveTorrentID: id)
@@ -967,6 +1065,7 @@ final class TorrentEngine: ObservableObject {
         AppSettings.shared.clearRecentCompletionMark(for: stable)
         AppSettings.shared.setCleanedDestination(nil, for: stable)
         desiredPausedKeys.remove(stable)
+        if boostedTorrentKey == stable { boostedTorrentKey = nil }
         queuedTorrentKeys.removeAll { $0 == stable }
         pendingAutoResumeKeys.remove(stable)
         startedAtByStableKey[stable] = nil
@@ -980,6 +1079,8 @@ final class TorrentEngine: ObservableObject {
         mediaByTorrentID[id] = nil
         metadataLookupStateByID[id] = nil
         lastProgressByID[id] = nil
+        transferSpeedSamplesByID[id] = nil
+        activeTransferSecondsByStableKey[stable] = nil
         fileFilterAppliedKeys.remove(stable)
 
         if shouldPoll {
@@ -990,7 +1091,36 @@ final class TorrentEngine: ObservableObject {
     func setFileWanted(_ wanted: Bool, torrentID: String, fileID: Int) {
         guard let session else { return }
         _ = torrentID.withCString { st_torrent_set_file_wanted(session, $0, Int32(fileID), wanted) }
+        automaticallyExcludedFiles.remove("\(stableKey(forLiveTorrentID: torrentID)):\(fileID)")
         fileFilterAppliedKeys.insert(stableKey(forLiveTorrentID: torrentID))
+        refreshFiles(for: torrentID)
+        poll()
+    }
+
+    func setFilesWanted(_ wanted: Bool, torrentID: String, fileIDs: [Int]) {
+        guard let session, !fileIDs.isEmpty else { return }
+        let stable = stableKey(forLiveTorrentID: torrentID)
+        for fileID in fileIDs {
+            _ = torrentID.withCString { st_torrent_set_file_wanted(session, $0, Int32(fileID), wanted) }
+            automaticallyExcludedFiles.remove("\(stable):\(fileID)")
+        }
+        fileFilterAppliedKeys.insert(stable)
+        refreshFiles(for: torrentID)
+        poll()
+    }
+
+    func setFilePrioritized(_ prioritized: Bool, torrentID: String, fileID: Int) {
+        guard let session else { return }
+        _ = torrentID.withCString { st_torrent_set_file_priority(session, $0, Int32(fileID), prioritized) }
+        refreshFiles(for: torrentID)
+        poll()
+    }
+
+    func setFilesPrioritized(_ prioritized: Bool, torrentID: String, fileIDs: [Int]) {
+        guard let session, !fileIDs.isEmpty else { return }
+        for fileID in fileIDs {
+            _ = torrentID.withCString { st_torrent_set_file_priority(session, $0, Int32(fileID), prioritized) }
+        }
         refreshFiles(for: torrentID)
         poll()
     }
@@ -1003,18 +1133,21 @@ final class TorrentEngine: ObservableObject {
         if let idx = items.firstIndex(where: { $0.key == torrentID }) {
             items[idx].category = normalizeCategory(category)
             TorrentStore.save(items)
+            fileFilterAppliedKeys.remove(torrentID)
             poll()
             return
         }
         if let idx = items.firstIndex(where: { MagnetKeyExtractor.key(from: $0.magnet) == torrentID }) {
             items[idx].category = normalizeCategory(category)
             TorrentStore.save(items)
+            fileFilterAppliedKeys.remove(items[idx].key)
             poll()
             return
         }
         if let idx = items.firstIndex(where: { $0.magnet.contains(torrentID) }) {
             items[idx].category = normalizeCategory(category)
             TorrentStore.save(items)
+            fileFilterAppliedKeys.remove(items[idx].key)
             poll()
             return
         }
@@ -1087,6 +1220,12 @@ final class TorrentEngine: ObservableObject {
         }
 
         torrents = rows
+        sampleActiveTransferSpeeds(current: rows, storedItems: storedItems)
+        if let boostedTorrentKey,
+           let boostedRow = rows.first(where: { stableKey(forLiveTorrentID: $0.id, items: storedItems) == boostedTorrentKey }),
+           boostedRow.isSeeding || boostedRow.progress >= 0.999 {
+            self.boostedTorrentKey = nil
+        }
 
         for row in rows {
             let stable = stableKey(forLiveTorrentID: row.id, items: storedItems)
@@ -1111,6 +1250,7 @@ final class TorrentEngine: ObservableObject {
         applyPendingAutoResumes(current: rows, storedItems: storedItems)
         applyAutomaticFileFilterIfNeeded(current: rows, storedItems: storedItems)
         handleIdleDownloadManagement(current: rows, storedItems: storedItems)
+        notifyNASAvailabilityIfNeeded(storedItems: storedItems)
 
         // Promote queued torrents when a download slot is free
         promoteQueuedIfNeeded()
@@ -1130,6 +1270,21 @@ final class TorrentEngine: ObservableObject {
         for t in rows { lastProgressByID[t.id] = t.progress }
     }
 
+    private func sampleActiveTransferSpeeds(current: [TorrentRow], storedItems: [StoredTorrent]) {
+        for row in current {
+            guard !row.isPaused, !row.isSeeding, row.progress < 0.999 else { continue }
+            let stable = stableKey(forLiveTorrentID: row.id, items: storedItems)
+            let activeSecond = (activeTransferSecondsByStableKey[stable] ?? 0) + 1
+            activeTransferSecondsByStableKey[stable] = activeSecond
+            var samples = transferSpeedSamplesByID[row.id] ?? []
+            samples.append(TransferSpeedSample(activeSecond: activeSecond, downBps: row.downBps, upBps: row.upBps))
+            if samples.count > 180 {
+                samples.removeFirst(samples.count - 180)
+            }
+            transferSpeedSamplesByID[row.id] = samples
+        }
+    }
+
     private func autoRemoveSeededIfNeeded(current: [TorrentRow], storedItems: [StoredTorrent]) {
         let settings = AppSettings.shared
         let evaluateTime = settings.autoRemoveAfterSeedTime && settings.seedTimeLimitMinutes > 0
@@ -1143,7 +1298,6 @@ final class TorrentEngine: ObservableObject {
         for row in current {
             guard row.isSeeding else { continue }
             let stable = stableKey(forLiveTorrentID: row.id, items: storedItems)
-            if shouldSkipAutoRemoval(forStableKey: stable) { continue }
 
             var shouldRemove = false
 
@@ -1161,6 +1315,12 @@ final class TorrentEngine: ObservableObject {
             }
 
             if shouldRemove {
+                AppNotificationCenter.shared.send(
+                    .autoRemove,
+                    title: "Torrent removed after seeding",
+                    body: row.name,
+                    identifier: "auto-remove-\(stable)"
+                )
                 removeIDs.append(row.id)
             }
         }
@@ -1170,16 +1330,6 @@ final class TorrentEngine: ObservableObject {
             removeTorrent(id: id, deleteFiles: false, shouldPoll: false)
         }
         schedulePoll()
-    }
-
-    private func shouldSkipAutoRemoval(forStableKey stableKey: String) -> Bool {
-        guard let hint = ArrMetadataStore.find(key: stableKey) else { return false }
-        switch hint.source {
-        case .radarr, .sonarr:
-            return true
-        case .unknown:
-            return false
-        }
     }
 
     private func applyPendingAutoResumes(current: [TorrentRow], storedItems: [StoredTorrent]) {
@@ -1235,9 +1385,16 @@ final class TorrentEngine: ObservableObject {
                 completedAt: completedAt,
                 durationSeconds: duration,
                 outcome: AppSettings.shared.autoCleanupEnabled ? "Completed (cleanup queued)" : "Completed",
-                cleanedDestinationPath: AppSettings.shared.cleanedDestination(for: stable)
+                cleanedDestinationPath: AppSettings.shared.cleanedDestination(for: stable),
+                source: ArrMetadataStore.find(key: stable)?.source.rawValue.capitalized ?? "Manual"
             )
             AppSettings.shared.appendRecentDownload(item)
+            AppNotificationCenter.shared.send(
+                .completion,
+                title: "Download complete",
+                body: t.name,
+                identifier: "completion-\(stable)"
+            )
         }
     }
 
@@ -1274,6 +1431,7 @@ final class TorrentEngine: ObservableObject {
         idleObservedAtByStableKey = idleObservedAtByStableKey.filter { activeStable.contains($0.key) }
         idleAutoPausedAtByStableKey = idleAutoPausedAtByStableKey.filter { activeStable.contains($0.key) }
         idleAutoPausedKeys = idleAutoPausedKeys.intersection(activeStable)
+        stalledNotificationKeys = stalledNotificationKeys.intersection(activeStable)
 
         for row in current {
             let stable = stableKey(forLiveTorrentID: row.id, items: storedItems)
@@ -1301,6 +1459,7 @@ final class TorrentEngine: ObservableObject {
             let hasActivity = row.downBps > 0 || row.upBps > 0 || row.peers > 0
             if hasActivity {
                 idleObservedAtByStableKey[stable] = nil
+                stalledNotificationKeys.remove(stable)
                 continue
             }
 
@@ -1319,7 +1478,35 @@ final class TorrentEngine: ObservableObject {
             idleAutoPausedAtByStableKey[stable] = now
             idleObservedAtByStableKey[stable] = nil
             queuedTorrentKeys.append(stable)
+            if stalledNotificationKeys.insert(stable).inserted {
+                AppNotificationCenter.shared.send(
+                    .stalledDownload,
+                    title: "Download stalled",
+                    body: "\(row.name) has been idle and was paused temporarily.",
+                    identifier: "stalled-\(stable)"
+                )
+            }
         }
+    }
+
+    private func notifyNASAvailabilityIfNeeded(storedItems: [StoredTorrent]) {
+        let currentUnavailable = Set(storedItems.compactMap { item -> String? in
+            let path = item.savePath
+            guard path.hasPrefix("/Volumes/"),
+                  validateSavePathAvailability(path) != nil else { return nil }
+            return path
+        })
+
+        for path in currentUnavailable.subtracting(unavailableNASPaths) {
+            let volume = path.split(separator: "/").dropFirst().first.map(String.init) ?? path
+            AppNotificationCenter.shared.send(
+                .nasDisconnected,
+                title: "NAS disconnected",
+                body: "Cannot reach '\(volume)'. Downloads using this volume will wait until it reconnects.",
+                identifier: "nas-disconnected-\(volume)"
+            )
+        }
+        unavailableNASPaths = currentUnavailable
     }
 
     private func promoteQueuedIfNeeded() {
@@ -1333,7 +1520,20 @@ final class TorrentEngine: ObservableObject {
             queuedTorrentKeys.removeAll()
             return
         }
-        let activeCount = torrents.filter { !$0.isPaused && !$0.isSeeding && $0.progress < 0.999 }.count
+        if AppSettings.shared.queueManagementMode == "automatic" {
+            queuedTorrentKeys.sort { lhs, rhs in
+                let lhsRow = torrents.first { stableKey(forLiveTorrentID: $0.id) == lhs }
+                let rhsRow = torrents.first { stableKey(forLiveTorrentID: $0.id) == rhs }
+                return (lhsRow?.progress ?? 0) > (rhsRow?.progress ?? 0)
+            }
+        }
+
+        let activeCount = torrents.filter {
+            !$0.isPaused &&
+            !$0.isSeeding &&
+            $0.progress < 0.999 &&
+            stableKey(forLiveTorrentID: $0.id) != boostedTorrentKey
+        }.count
         var available = maxActive - activeCount
         while available > 0, !queuedTorrentKeys.isEmpty {
             let key = queuedTorrentKeys.removeFirst()
@@ -1451,31 +1651,73 @@ final class TorrentEngine: ObservableObject {
     }
     #endif
 
-    // MARK: - Manual cleanup trigger (unchanged-ish, but uses stable lookup)
+    // MARK: - Manual cleanup
 
     func cleanupNow(torrentID: String) {
-        guard let meta = mediaByTorrentID[torrentID] else { return }
-        guard let t = torrents.first(where: { $0.id == torrentID }) else { return }
+        organizeNow(torrentID: torrentID)
+    }
+
+    func cleanupPreview(torrentID: String, destinationOverride: URL? = nil) -> TorrentCleanup.CleanupPlan? {
+        guard let meta = mediaByTorrentID[torrentID] else { return nil }
+        guard let t = torrents.first(where: { $0.id == torrentID }) else { return nil }
 
         if filesByTorrentID[torrentID] == nil {
             refreshFiles(for: torrentID)
         }
         let files = filesByTorrentID[torrentID] ?? []
-        let relPaths = files.map(\.path)
+        let relPaths = files.filter { !$0.isSkipped }.map(\.path)
 
         guard let savePath = savePath(forLiveTorrentID: torrentID) else {
-            print("Cleanup: no savePath for \(torrentID)")
-            return
+            return nil
         }
 
         let saveRoot = URL(fileURLWithPath: savePath, isDirectory: true)
-
         let parsed = TorrentNameParser.parse(t.name)
+        let appSettings = AppSettings.shared
+        let fallback = destinationOverride ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        let cleanupSettings = TorrentCleanup.CleanupSettings(
+            moviesRoot: destinationOverride ?? appSettings.moviesURL() ?? fallback,
+            tvRoot: destinationOverride ?? appSettings.tvURL() ?? fallback,
+            mode: .move,
+            collision: .rename
+        )
 
-        let base = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        let settings = TorrentCleanup.CleanupSettings(
-            moviesRoot: base.appendingPathComponent("swiftTorrent Movies", isDirectory: true),
-            tvRoot: base.appendingPathComponent("swiftTorrent TV", isDirectory: true),
+        return try? TorrentCleanup.preview(
+                saveRoot: saveRoot,
+                filePaths: relPaths,
+                meta: meta,
+                parsedSeason: parsed.season,
+                category: t.category,
+                settings: cleanupSettings
+        )
+    }
+
+    func organizeNow(torrentID: String, destinationOverride: URL? = nil) {
+        guard let meta = mediaByTorrentID[torrentID],
+              let t = torrents.first(where: { $0.id == torrentID }),
+              let savePath = savePath(forLiveTorrentID: torrentID) else {
+            userFacingError = "Cleanup details are not available for this torrent yet."
+            AppNotificationCenter.shared.send(
+                .cleanupFailure,
+                title: "Cleanup failed",
+                body: "Cleanup details are not available for this torrent yet.",
+                identifier: "cleanup-failed-\(torrentID)"
+            )
+            return
+        }
+        if filesByTorrentID[torrentID] == nil { refreshFiles(for: torrentID) }
+        let relPaths = (filesByTorrentID[torrentID] ?? []).filter { !$0.isSkipped }.map(\.path)
+        let saveRoot = URL(fileURLWithPath: savePath, isDirectory: true)
+        let appSettings = AppSettings.shared
+        guard destinationOverride != nil || (appSettings.moviesURL() != nil && appSettings.tvURL() != nil) else {
+            userFacingError = "Set Movies and TV cleanup destinations in Settings first."
+            notifyCleanupFailure(torrentName: t.name, reason: "Set Movies and TV cleanup destinations in Settings first.")
+            return
+        }
+        let fallback = destinationOverride ?? URL(fileURLWithPath: savePath, isDirectory: true)
+        let cleanupSettings = TorrentCleanup.CleanupSettings(
+            moviesRoot: destinationOverride ?? appSettings.moviesURL() ?? fallback,
+            tvRoot: destinationOverride ?? appSettings.tvURL() ?? fallback,
             mode: .move,
             collision: .rename
         )
@@ -1486,13 +1728,22 @@ final class TorrentEngine: ObservableObject {
                 saveRoot: saveRoot,
                 filePaths: relPaths,
                 meta: meta,
-                parsedSeason: parsed.season,
+                parsedSeason: TorrentNameParser.parse(t.name).season,
                 category: t.category,
-                settings: settings
+                settings: cleanupSettings
             )
             print("Cleanup OK -> \(dest.path)")
+            let stable = stableKey(forLiveTorrentID: torrentID)
+            appSettings.setCleanedDestination(dest.path, for: stable)
+            appSettings.markCleaned(stable)
         } catch {
-            print("Cleanup failed: \(error.localizedDescription)")
+            userFacingError = "Cleanup failed: \(error.localizedDescription)"
+            AppNotificationCenter.shared.send(
+                .cleanupFailure,
+                title: "Cleanup failed",
+                body: "\(t.name): \(error.localizedDescription)",
+                identifier: "cleanup-failed-\(torrentID)"
+            )
         }
     }
 
@@ -1557,12 +1808,16 @@ final class TorrentEngine: ObservableObject {
     private func runCleanupUsingSettings(liveTorrentID: String) async -> Bool {
         let settings = AppSettings.shared
 
-        guard let meta = await MainActor.run(body: { self.mediaByTorrentID[liveTorrentID] }) else { return false }
         guard let t = await MainActor.run(body: { self.torrents.first(where: { $0.id == liveTorrentID }) }) else { return false }
+        guard let meta = await MainActor.run(body: { self.mediaByTorrentID[liveTorrentID] }) else {
+            notifyCleanupFailure(torrentName: t.name, reason: "Media details could not be loaded.")
+            return false
+        }
 
         guard let moviesRoot = settings.moviesURL(),
               let tvRoot = settings.tvURL() else {
             print("Cleanup: destinations not set in Settings.")
+            notifyCleanupFailure(torrentName: t.name, reason: "Cleanup destinations are not available.")
             return false
         }
 
@@ -1571,11 +1826,13 @@ final class TorrentEngine: ObservableObject {
         let relPaths = files.map(\.path)
         if relPaths.isEmpty {
             print("Cleanup: no file list.")
+            notifyCleanupFailure(torrentName: t.name, reason: "No downloadable files were available.")
             return false
         }
 
         guard let savePath = savePath(forLiveTorrentID: liveTorrentID) else {
             print("Cleanup: no savePath in store.")
+            notifyCleanupFailure(torrentName: t.name, reason: "The saved download folder could not be found.")
             return false
         }
         let saveRoot = URL(fileURLWithPath: savePath, isDirectory: true)
@@ -1614,8 +1871,17 @@ final class TorrentEngine: ObservableObject {
             return true
         } catch {
             print("Cleanup failed: \(error.localizedDescription)")
+            notifyCleanupFailure(torrentName: t.name, reason: error.localizedDescription)
             return false
         }
+    }
+
+    private func notifyCleanupFailure(torrentName: String, reason: String) {
+        AppNotificationCenter.shared.send(
+            .cleanupFailure,
+            title: "Cleanup failed",
+            body: "\(torrentName): \(reason)"
+        )
     }
 
     private func validateSavePathAvailability(_ path: String) -> String? {

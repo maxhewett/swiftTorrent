@@ -201,10 +201,11 @@ bool st_get_torrent_file_info(
     const char** out_path,
     int64_t* out_size,
     int64_t* out_done,
-    bool* out_wanted
+    bool* out_wanted,
+    bool* out_prioritized
 ) {
     auto s = reinterpret_cast<SessionWrap*>(session);
-    if (!s || !out_path || !out_size || !out_done || !out_wanted) return false;
+    if (!s || !out_path || !out_size || !out_done || !out_wanted || !out_prioritized) return false;
     if (torrent_index < 0 || torrent_index >= (int)s->handles.size()) return false;
 
     lt::torrent_handle h = s->handles[torrent_index];
@@ -231,6 +232,7 @@ bool st_get_torrent_file_info(
     *out_size = (int64_t)ti->files().file_size(file_index);
     *out_done = (file_index < (int)prog.size()) ? (int64_t)prog[file_index] : 0;
     *out_wanted = !(file_index < static_cast<int>(priorities.size()) && priorities[static_cast<size_t>(file_index)] == lt::dont_download);
+    *out_prioritized = file_index < static_cast<int>(priorities.size()) && priorities[static_cast<size_t>(file_index)] == lt::top_priority;
 
     return true;
 }
@@ -315,6 +317,35 @@ bool st_torrent_set_file_wanted(
     }
 
     priorities[static_cast<size_t>(file_index)] = wanted ? lt::default_priority : lt::dont_download;
+    h.prioritize_files(priorities);
+    return true;
+}
+
+bool st_torrent_set_file_priority(
+    STSessionRef session,
+    const char* torrent_id_hex,
+    int32_t file_index,
+    bool prioritized
+) {
+    if (!session || !torrent_id_hex || file_index < 0) return false;
+    auto* w = (SessionWrap*)session;
+
+    std::lock_guard<std::mutex> lock(w->mtx);
+    lt::torrent_handle h = find_handle_by_id(w, torrent_id_hex);
+    if (!h.is_valid()) return false;
+
+    auto ti = h.torrent_file();
+    if (!ti) return false;
+    if (file_index >= ti->files().num_files()) return false;
+
+    std::vector<lt::download_priority_t> priorities = h.get_file_priorities();
+    if (priorities.empty() || file_index >= static_cast<int32_t>(priorities.size())) {
+        priorities.resize(ti->files().num_files(), lt::default_priority);
+    }
+
+    if (priorities[static_cast<size_t>(file_index)] == lt::dont_download) return false;
+
+    priorities[static_cast<size_t>(file_index)] = prioritized ? lt::top_priority : lt::default_priority;
     h.prioritize_files(priorities);
     return true;
 }

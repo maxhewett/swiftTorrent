@@ -24,6 +24,14 @@ enum MediaFileFilter {
     }
 }
 
+struct FileExclusionRule: Codable, Hashable, Identifiable {
+    let id: UUID
+    var fileExtension: String
+    var categoryIDs: Set<String>
+
+    var appliesToAllCategories: Bool { categoryIDs.isEmpty }
+}
+
 struct RecentDownloadItem: Codable, Hashable, Identifiable {
     let id: UUID
     let torrentKey: String
@@ -38,6 +46,7 @@ struct RecentDownloadItem: Codable, Hashable, Identifiable {
     let durationSeconds: Double?
     let outcome: String
     let cleanedDestinationPath: String?
+    let source: String?
 
     var typeLabel: String {
         switch typeRaw.lowercased() {
@@ -79,6 +88,7 @@ final class AppSettings: ObservableObject {
         static let rpcUsername = "swiftTorrent.settings.rpcUsername"
         static let rpcPassword = "swiftTorrent.settings.rpcPassword"
         static let maxActiveDownloads = "swiftTorrent.settings.maxActiveDownloads"
+        static let queueManagementMode = "swiftTorrent.settings.queueManagementMode"
         static let autoFilterNonMediaFiles = "swiftTorrent.settings.autoFilterNonMediaFiles"
         static let categoryDefinitions = "swiftTorrent.settings.categoryDefinitions"
         static let legacyCategories = "swiftTorrent.settings.categories"
@@ -100,6 +110,13 @@ final class AppSettings: ObservableObject {
         static let dockOverlayMetricMode = "swiftTorrent.settings.dockOverlayMetricMode"
         static let dockOverlayStyleMode = "swiftTorrent.settings.dockOverlayStyleMode"
         static let categoryHeaderSecondaryMode = "swiftTorrent.settings.categoryHeaderSecondaryMode"
+        static let fileExclusionRules = "swiftTorrent.settings.fileExclusionRules"
+        static let notificationsEnabled = "swiftTorrent.settings.notificationsEnabled"
+        static let notifyCompletion = "swiftTorrent.settings.notifyCompletion"
+        static let notifyNASDisconnected = "swiftTorrent.settings.notifyNASDisconnected"
+        static let notifyStalledDownload = "swiftTorrent.settings.notifyStalledDownload"
+        static let notifyCleanupFailure = "swiftTorrent.settings.notifyCleanupFailure"
+        static let notifyAutoRemove = "swiftTorrent.settings.notifyAutoRemove"
     }
 
     static let defaultCategories: [CategoryDefinition] = [
@@ -139,6 +156,10 @@ final class AppSettings: ObservableObject {
 
     @Published var maxActiveDownloads: Int = 5 {
         didSet { UserDefaults.standard.set(maxActiveDownloads, forKey: K.maxActiveDownloads) }
+    }
+
+    @Published var queueManagementMode: String = "automatic" {
+        didSet { UserDefaults.standard.set(queueManagementMode, forKey: K.queueManagementMode) }
     }
 
     @Published var autoFilterNonMediaFiles: Bool = true {
@@ -191,6 +212,38 @@ final class AppSettings: ObservableObject {
 
     @Published var categoryHeaderSecondaryMode: String = "none" {
         didSet { UserDefaults.standard.set(categoryHeaderSecondaryMode, forKey: K.categoryHeaderSecondaryMode) }
+    }
+
+    @Published var notificationsEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(notificationsEnabled, forKey: K.notificationsEnabled) }
+    }
+
+    @Published var notifyCompletion: Bool = true {
+        didSet { UserDefaults.standard.set(notifyCompletion, forKey: K.notifyCompletion) }
+    }
+
+    @Published var notifyNASDisconnected: Bool = true {
+        didSet { UserDefaults.standard.set(notifyNASDisconnected, forKey: K.notifyNASDisconnected) }
+    }
+
+    @Published var notifyStalledDownload: Bool = true {
+        didSet { UserDefaults.standard.set(notifyStalledDownload, forKey: K.notifyStalledDownload) }
+    }
+
+    @Published var notifyCleanupFailure: Bool = true {
+        didSet { UserDefaults.standard.set(notifyCleanupFailure, forKey: K.notifyCleanupFailure) }
+    }
+
+    @Published var notifyAutoRemove: Bool = true {
+        didSet { UserDefaults.standard.set(notifyAutoRemove, forKey: K.notifyAutoRemove) }
+    }
+
+    @Published private(set) var fileExclusionRules: [FileExclusionRule] {
+        didSet {
+            if let data = try? JSONEncoder().encode(fileExclusionRules) {
+                UserDefaults.standard.set(data, forKey: K.fileExclusionRules)
+            }
+        }
     }
 
     @Published var categoryDefinitions: [CategoryDefinition] = [] {
@@ -305,6 +358,7 @@ final class AppSettings: ObservableObject {
 
         let storedMax = UserDefaults.standard.integer(forKey: K.maxActiveDownloads)
         self.maxActiveDownloads = storedMax > 0 ? storedMax : 5
+        self.queueManagementMode = UserDefaults.standard.string(forKey: K.queueManagementMode) ?? "automatic"
         if UserDefaults.standard.object(forKey: K.autoFilterNonMediaFiles) == nil {
             self.autoFilterNonMediaFiles = true
         } else {
@@ -346,9 +400,35 @@ final class AppSettings: ObservableObject {
         self.dockOverlayMetricMode = UserDefaults.standard.string(forKey: K.dockOverlayMetricMode) ?? "both"
         self.dockOverlayStyleMode = UserDefaults.standard.string(forKey: K.dockOverlayStyleMode) ?? "auto"
         self.categoryHeaderSecondaryMode = UserDefaults.standard.string(forKey: K.categoryHeaderSecondaryMode) ?? "none"
+        self.notificationsEnabled = UserDefaults.standard.bool(forKey: K.notificationsEnabled)
+        self.notifyCompletion = Self.boolDefaultingToTrue(forKey: K.notifyCompletion)
+        self.notifyNASDisconnected = Self.boolDefaultingToTrue(forKey: K.notifyNASDisconnected)
+        self.notifyStalledDownload = Self.boolDefaultingToTrue(forKey: K.notifyStalledDownload)
+        self.notifyCleanupFailure = Self.boolDefaultingToTrue(forKey: K.notifyCleanupFailure)
+        self.notifyAutoRemove = Self.boolDefaultingToTrue(forKey: K.notifyAutoRemove)
+        if let data = UserDefaults.standard.data(forKey: K.fileExclusionRules),
+           let decoded = try? JSONDecoder().decode([FileExclusionRule].self, from: data) {
+            self.fileExclusionRules = Self.normalizedFileExclusionRules(decoded)
+        } else {
+            self.fileExclusionRules = []
+        }
         self.categoryDefinitions = Self.loadCategoryDefinitions()
 
         refreshResolvedURLs()
+    }
+
+    func shouldNotify(_ event: AppNotificationCenter.Event) -> Bool {
+        switch event {
+        case .completion: return notifyCompletion
+        case .nasDisconnected: return notifyNASDisconnected
+        case .stalledDownload: return notifyStalledDownload
+        case .cleanupFailure: return notifyCleanupFailure
+        case .autoRemove: return notifyAutoRemove
+        }
+    }
+
+    private static func boolDefaultingToTrue(forKey key: String) -> Bool {
+        UserDefaults.standard.object(forKey: key) == nil || UserDefaults.standard.bool(forKey: key)
     }
 
     func markCleaned(_ key: String) { cleanedTorrentKeys.insert(key) }
@@ -385,6 +465,25 @@ final class AppSettings: ObservableObject {
             cleanedDestinationByTorrentKey.removeValue(forKey: key)
         } else {
             cleanedDestinationByTorrentKey[key] = trimmed
+        }
+        if let index = recentDownloads.firstIndex(where: { $0.torrentKey == key }) {
+            let item = recentDownloads[index]
+            recentDownloads[index] = RecentDownloadItem(
+                id: item.id,
+                torrentKey: item.torrentKey,
+                torrentName: item.torrentName,
+                title: item.title,
+                year: item.year,
+                typeRaw: item.typeRaw,
+                posterLocalPath: item.posterLocalPath,
+                posterRemoteURL: item.posterRemoteURL,
+                startedAt: item.startedAt,
+                completedAt: item.completedAt,
+                durationSeconds: item.durationSeconds,
+                outcome: item.outcome,
+                cleanedDestinationPath: trimmed.isEmpty ? nil : trimmed,
+                source: item.source
+            )
         }
     }
 
@@ -460,6 +559,35 @@ final class AppSettings: ObservableObject {
         default:
             return normalized
         }
+    }
+
+    func addFileExclusionRule(fileExtension: String, categoryIDs: Set<String> = []) {
+        guard let ext = Self.normalizeFileExtension(fileExtension) else { return }
+        let normalizedCategories = Set(categoryIDs.compactMap { normalizedCategoryValue($0) })
+        guard !fileExclusionRules.contains(where: { $0.fileExtension == ext && $0.categoryIDs == normalizedCategories }) else { return }
+        fileExclusionRules.append(FileExclusionRule(id: UUID(), fileExtension: ext, categoryIDs: normalizedCategories))
+    }
+
+    func removeFileExclusionRule(id: UUID) {
+        fileExclusionRules.removeAll { $0.id == id }
+    }
+
+    func setFileExclusionRuleCategories(id: UUID, categoryIDs: Set<String>) {
+        guard let index = fileExclusionRules.firstIndex(where: { $0.id == id }) else { return }
+        fileExclusionRules[index].categoryIDs = Set(categoryIDs.compactMap { normalizedCategoryValue($0) })
+    }
+
+    func shouldExcludeFile(path: String, category: String?) -> Bool {
+        guard let ext = Self.normalizeFileExtension(URL(fileURLWithPath: path).pathExtension) else { return false }
+        let normalizedCategory = normalizedCategoryValue(category)
+        return fileExclusionRules.contains { rule in
+            rule.fileExtension == ext && (rule.appliesToAllCategories || normalizedCategory.map(rule.categoryIDs.contains) == true)
+        }
+    }
+
+    func shouldDownloadFile(path: String, category: String?) -> Bool {
+        if shouldExcludeFile(path: path, category: category) { return false }
+        return !autoFilterNonMediaFiles || MediaFileFilter.shouldAllow(path: path)
     }
 
     func setMoviesURL(_ url: URL) throws {
@@ -609,6 +737,21 @@ final class AppSettings: ObservableObject {
         let defaults = defaultCategories.compactMap { byID.removeValue(forKey: $0.id) ?? $0 }
         let customs = byID.values.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         return defaults + customs
+    }
+
+    private static func normalizedFileExclusionRules(_ rules: [FileExclusionRule]) -> [FileExclusionRule] {
+        rules.compactMap { rule in
+            guard let ext = normalizeFileExtension(rule.fileExtension) else { return nil }
+            return FileExclusionRule(id: rule.id, fileExtension: ext, categoryIDs: rule.categoryIDs)
+        }
+    }
+
+    private static func normalizeFileExtension(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let ext = trimmed.hasPrefix(".") ? String(trimmed.dropFirst()) : trimmed
+        guard !ext.isEmpty, ext.allSatisfy({ $0.isLetter || $0.isNumber }) else { return nil }
+        return ext
     }
 
     private static func normalizeCategoryID(_ value: String?) -> String? {
