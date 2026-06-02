@@ -1,4 +1,5 @@
-<img width="150" height="150" alt="swiftTorrent icon" src="https://github.com/user-attachments/assets/2c91bada-00ff-4b38-b124-3ad611b99843" />
+<img width="150" height="150" alt="image" src="https://github.com/user-attachments/assets/989f5031-4e96-4ecf-86fd-ab755086507d" />
+
 
 
 # swiftTorrent
