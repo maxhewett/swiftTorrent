@@ -182,7 +182,10 @@ final class LocalWebServer {
                 "path": file.path,
                 "size": file.size,
                 "done": file.done,
-                "progress": file.progress
+                "progress": file.progress,
+                "isWanted": file.isWanted,
+                "isSkipped": file.isSkipped,
+                "isPrioritized": file.isPrioritized
             ] as [String: Any]
         }
 
@@ -224,9 +227,23 @@ final class LocalWebServer {
             engine.removeTorrent(id: id, deleteFiles: deleteFiles)
         case "cleanup":
             engine.cleanupNow(torrentID: id)
+        case "boost":
+            engine.toggleBoost(torrentID: id)
         case "setCategory":
             let category = (body["category"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             engine.setCategory(category?.isEmpty == false ? category : nil, for: id)
+        case "setFileWanted":
+            guard let fileID = body["fileID"] as? Int,
+                  let wanted = body["wanted"] as? Bool else {
+                return .badRequest(.text("setFileWanted requires fileID and wanted"))
+            }
+            engine.setFileWanted(wanted, torrentID: id, fileID: fileID)
+        case "setFilePriority":
+            guard let fileID = body["fileID"] as? Int,
+                  let prioritized = body["prioritized"] as? Bool else {
+                return .badRequest(.text("setFilePriority requires fileID and prioritized"))
+            }
+            engine.setFilePrioritized(prioritized, torrentID: id, fileID: fileID)
         default:
             return .badRequest(.text("Unsupported action: \(action)"))
         }
@@ -390,12 +407,18 @@ final class LocalWebServer {
             "progress": torrent.progress,
             "downBps": torrent.downBps,
             "upBps": torrent.upBps,
+            "totalWanted": torrent.totalWanted,
+            "totalWantedDone": torrent.totalWantedDone,
+            "downloadedTotal": torrent.downloadedTotal,
+            "uploadedTotal": torrent.uploadedTotal,
             "peers": torrent.peers,
             "seeds": torrent.seeds,
             "state": torrent.state,
             "stateLabel": stateLabel(torrent.state, isPaused: torrent.isPaused, isSeeding: torrent.isSeeding),
             "isPaused": torrent.isPaused,
             "isSeeding": torrent.isSeeding,
+            "isBoosted": engine?.isBoosted(torrentID: torrent.id) ?? false,
+            "isQueued": engine?.isQueued(torrentID: torrent.id) ?? false,
             "category": category as Any,
             "categoryTitle": AppSettings.shared.categoryDefinition(for: category)?.title as Any,
             "metadata": metadataPayload(for: torrent.id, metadata: metadata) as Any,
