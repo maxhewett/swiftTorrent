@@ -321,11 +321,13 @@ final class LocalWebServer {
         let source = arrSource(from: fields)
         let type = arrType(from: fields, source: source)
         let title = firstValue(in: fields, keys: [
-            "title",
-            "seriesTitle",
-            "movieTitle",
             "radarr_movie_title",
-            "sonarr_series_title"
+            "sonarr_series_title",
+            "movieTitle",
+            "seriesTitle",
+            "movie_title",
+            "series_title",
+            "title"
         ])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         guard !title.isEmpty else {
@@ -335,6 +337,14 @@ final class LocalWebServer {
         let hint = ArrMetadataHint(
             key: key,
             source: source,
+            arrID: firstIntValue(in: fields, keys: [
+                "radarr_movie_id",
+                "sonarr_series_id",
+                "movieId",
+                "seriesId",
+                "movie_id",
+                "series_id"
+            ]),
             type: type,
             title: title,
             year: firstIntValue(in: fields, keys: [
@@ -488,6 +498,10 @@ final class LocalWebServer {
             if let value = fields[key], !value.isEmpty {
                 return value
             }
+            if let match = fields.first(where: { $0.key.caseInsensitiveCompare(key) == .orderedSame }),
+               !match.value.isEmpty {
+                return match.value
+            }
         }
         return nil
     }
@@ -495,6 +509,10 @@ final class LocalWebServer {
     private func firstIntValue(in fields: [String: String], keys: [String]) -> Int? {
         for key in keys {
             if let value = fields[key], let intValue = Int(value) {
+                return intValue
+            }
+            if let match = fields.first(where: { $0.key.caseInsensitiveCompare(key) == .orderedSame }),
+               let intValue = Int(match.value) {
                 return intValue
             }
         }

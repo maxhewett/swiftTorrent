@@ -16,6 +16,7 @@ struct ArrMetadataHint: Codable, Hashable {
 
     let key: String
     let source: Source
+    let arrID: Int?
     let type: String
     let title: String
     let year: Int?
@@ -24,6 +25,47 @@ struct ArrMetadataHint: Codable, Hashable {
     let tvdbID: Int?
     let traktID: Int?
     let updatedAt: Date
+
+    init(
+        key: String,
+        source: Source,
+        arrID: Int?,
+        type: String,
+        title: String,
+        year: Int?,
+        imdbID: String?,
+        tmdbID: Int?,
+        tvdbID: Int?,
+        traktID: Int?,
+        updatedAt: Date
+    ) {
+        self.key = key
+        self.source = source
+        self.arrID = arrID
+        self.type = type
+        self.title = title
+        self.year = year
+        self.imdbID = imdbID
+        self.tmdbID = tmdbID
+        self.tvdbID = tvdbID
+        self.traktID = traktID
+        self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decode(String.self, forKey: .key)
+        source = try container.decode(Source.self, forKey: .source)
+        arrID = try container.decodeIfPresent(Int.self, forKey: .arrID)
+        type = try container.decode(String.self, forKey: .type)
+        title = try container.decode(String.self, forKey: .title)
+        year = try container.decodeIfPresent(Int.self, forKey: .year)
+        imdbID = try container.decodeIfPresent(String.self, forKey: .imdbID)
+        tmdbID = try container.decodeIfPresent(Int.self, forKey: .tmdbID)
+        tvdbID = try container.decodeIfPresent(Int.self, forKey: .tvdbID)
+        traktID = try container.decodeIfPresent(Int.self, forKey: .traktID)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
 
     var mediaType: MediaMetadata.MediaType? {
         switch type.lowercased() {

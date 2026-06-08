@@ -650,27 +650,6 @@ final class TorrentEngine: ObservableObject {
         value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    private func candidateMatchesIdentifier(_ candidate: MetadataCandidate, hint: ArrMetadataHint) -> Bool {
-        if let hintedTMDB = hint.tmdbID, let candidateTMDB = candidate.tmdbID, hintedTMDB == candidateTMDB { return true }
-        if let hintedTVDB = hint.tvdbID, let candidateTVDB = candidate.tvdbID, hintedTVDB == candidateTVDB { return true }
-        if let hintedIMDB = normalizedIMDBID(hint.imdbID),
-           let candidateIMDB = normalizedIMDBID(candidate.imdbID),
-           hintedIMDB == candidateIMDB {
-            return true
-        }
-        if let hintedTrakt = hint.traktID, let candidateTrakt = candidate.traktID, hintedTrakt == candidateTrakt {
-            return true
-        }
-        return false
-    }
-
-    private func hasARRIdentifier(_ hint: ArrMetadataHint) -> Bool {
-        hint.tmdbID != nil ||
-        hint.tvdbID != nil ||
-        normalizedIMDBID(hint.imdbID) != nil ||
-        hint.traktID != nil
-    }
-
     private func normalizeLookupText(_ text: String) -> String {
         let lowered = text.lowercased()
         let replaced = String(String.UnicodeScalarView(lowered.unicodeScalars.map { scalar in
@@ -733,44 +712,62 @@ final class TorrentEngine: ObservableObject {
         guard let type = hint.mediaType else { return nil }
 
         let title = hint.title
-        let year = hint.year
-        var traktID: Int? = hint.traktID
+        var year = hint.year
+        let traktID: Int? = hint.traktID
         var tmdbID = hint.tmdbID
         var imdbID = hint.imdbID
         var tvdbID = hint.tvdbID
         var overview: String?
         var posterURL: URL?
 
-        guard hasARRIdentifier(hint) else {
-            return MediaMetadata(
-                type: type,
-                title: title,
-                year: year,
-                traktID: traktID,
-                tmdbID: tmdbID,
-                imdbID: imdbID,
-                tvdbID: tvdbID,
-                overview: nil,
-                posterURL: nil,
-                localPosterPath: nil,
-                displaySuffix: displaySuffix
-            )
-        }
-
-        let candidates = try await resolvedMetadataCandidates(
-            query: hint.title,
-            year: hint.year,
-            preferredType: type,
-            identifierHint: hint
-        )
-
-        if let fallback = candidates.first(where: { candidateMatchesIdentifier($0, hint: hint) }) {
-            if traktID == nil { traktID = fallback.traktID }
-            if tmdbID == nil { tmdbID = fallback.tmdbID }
-            if imdbID == nil { imdbID = fallback.imdbID }
-            if tvdbID == nil { tvdbID = fallback.tvdbID }
-            if overview == nil { overview = fallback.overview }
-            if posterURL == nil { posterURL = fallback.posterURL }
+        // Radarr/Sonarr already resolved the concrete media item. Do not run a
+        // title search here; that can incorrectly override known Arr metadata.
+        if let traktID {
+            let trakt = TraktClient(clientID: "eb92f2cb922619e94a4ca0adcfd9572fc0397acb18a33cb6e65b7f2219983d9e")
+            switch type {
+            case .movie:
+                if let movie = try? await trakt.movie(id: String(traktID)) {
+                    if year == nil { year = movie.year }
+                    if tmdbID == nil { tmdbID = movie.ids.tmdb }
+                    if imdbID == nil { imdbID = movie.ids.imdb }
+                    if tvdbID == nil { tvdbID = movie.ids.tvdb }
+                    overview = movie.overview
+                    posterURL = try? await FanartClient(apiKey: "40d7d215cf9c6d77743eaf4e3e9942c8").posterURL(for: MediaMetadata(
+                        type: type,
+                        title: title,
+                        year: year,
+                        traktID: traktID,
+                        tmdbID: tmdbID,
+                        imdbID: imdbID,
+                        tvdbID: tvdbID,
+                        overview: overview,
+                        posterURL: nil,
+                        localPosterPath: nil,
+                        displaySuffix: displaySuffix
+                    ))
+                }
+            case .show:
+                if let show = try? await trakt.show(id: String(traktID)) {
+                    if year == nil { year = show.year }
+                    if tmdbID == nil { tmdbID = show.ids.tmdb }
+                    if imdbID == nil { imdbID = show.ids.imdb }
+                    if tvdbID == nil { tvdbID = show.ids.tvdb }
+                    overview = show.overview
+                    posterURL = try? await FanartClient(apiKey: "40d7d215cf9c6d77743eaf4e3e9942c8").posterURL(for: MediaMetadata(
+                        type: type,
+                        title: title,
+                        year: year,
+                        traktID: traktID,
+                        tmdbID: tmdbID,
+                        imdbID: imdbID,
+                        tvdbID: tvdbID,
+                        overview: overview,
+                        posterURL: nil,
+                        localPosterPath: nil,
+                        displaySuffix: displaySuffix
+                    ))
+                }
+            }
         }
 
         return MediaMetadata(
