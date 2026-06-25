@@ -311,7 +311,11 @@ final class LocalWebServer {
             "download_id",
             "downloadid",
             "radarr_download_id",
-            "sonarr_download_id"
+            "sonarr_download_id",
+            "tsuname_download_id",
+            "infoHash",
+            "info_hash",
+            "hash"
         ])?.trimmingCharacters(in: .whitespacesAndNewlines),
               !rawDownloadID.isEmpty else {
             return .badRequest(.text("Missing downloadId"))
@@ -327,6 +331,9 @@ final class LocalWebServer {
             "seriesTitle",
             "movie_title",
             "series_title",
+            "mediaTitle",
+            "media_title",
+            "tsuname_title",
             "title"
         ])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
@@ -343,7 +350,10 @@ final class LocalWebServer {
                 "movieId",
                 "seriesId",
                 "movie_id",
-                "series_id"
+                "series_id",
+                "mediaId",
+                "media_id",
+                "tsuname_media_id"
             ]),
             type: type,
             title: title,
@@ -377,6 +387,31 @@ final class LocalWebServer {
                 "radarr_movie_traktid",
                 "sonarr_series_traktid"
             ]),
+            scope: firstValue(in: fields, keys: [
+                "scope",
+                "requestScope",
+                "request_scope",
+                "tsuname_scope"
+            ]),
+            seasons: intListValue(in: fields, keys: [
+                "seasons",
+                "season",
+                "seasonNumber",
+                "season_number",
+                "tsuname_seasons"
+            ]),
+            episodes: episodeRefsValue(in: fields, keys: [
+                "episodes",
+                "episode",
+                "episodeRefs",
+                "episode_refs",
+                "tsuname_episodes"
+            ]),
+            releaseTitle: firstValue(in: fields, keys: [
+                "releaseTitle",
+                "release_title",
+                "tsuname_release_title"
+            ]),
             updatedAt: Date()
         )
 
@@ -404,7 +439,10 @@ final class LocalWebServer {
             "key": key,
             "title": title,
             "type": type,
-            "source": hint.source.rawValue
+            "source": hint.source.rawValue,
+            "scope": hint.scope as Any,
+            "seasons": hint.seasons,
+            "episodes": hint.episodes.map { ["season": $0.season, "episode": $0.episode] }
         ])
     }
 
@@ -482,6 +520,10 @@ final class LocalWebServer {
                     fields[key] = string
                 } else if let number = value as? NSNumber {
                     fields[key] = number.stringValue
+                } else if JSONSerialization.isValidJSONObject(value),
+                          let data = try? JSONSerialization.data(withJSONObject: value),
+                          let string = String(data: data, encoding: .utf8) {
+                    fields[key] = string
                 }
             }
         }
@@ -519,12 +561,105 @@ final class LocalWebServer {
         return nil
     }
 
+    private func intListValue(in fields: [String: String], keys: [String]) -> [Int] {
+        for key in keys {
+            guard let raw = firstValue(in: fields, keys: [key]) else { continue }
+            let ints = ints(from: raw)
+            if !ints.isEmpty { return Array(Set(ints)).sorted() }
+        }
+        return []
+    }
+
+    private func ints(from raw: String) -> [Int] {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        if let data = trimmed.data(using: .utf8),
+           let array = try? JSONSerialization.jsonObject(with: data) as? [Any] {
+            return array.compactMap { value in
+                if let number = value as? NSNumber { return number.intValue }
+                if let string = value as? String { return Int(string.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                return nil
+            }
+        }
+
+        return trimmed
+            .split { ",;| \n\t".contains($0) }
+            .compactMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+
+    private func episodeRefsValue(in fields: [String: String], keys: [String]) -> [ArrMetadataHint.EpisodeRef] {
+        for key in keys {
+            guard let raw = firstValue(in: fields, keys: [key]) else { continue }
+            let episodes = episodeRefs(from: raw)
+            if !episodes.isEmpty {
+                return Array(Set(episodes)).sorted {
+                    $0.season == $1.season ? $0.episode < $1.episode : $0.season < $1.season
+                }
+            }
+        }
+        return []
+    }
+
+    private func episodeRefs(from raw: String) -> [ArrMetadataHint.EpisodeRef] {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        if let data = trimmed.data(using: .utf8),
+           let array = try? JSONSerialization.jsonObject(with: data) as? [Any] {
+            return array.compactMap { value in
+                if let dict = value as? [String: Any] {
+                    let season = intValue(from: dict, keys: ["season", "seasonNumber", "season_number"])
+                    let episode = intValue(from: dict, keys: ["episode", "episodeNumber", "episode_number"])
+                    if let season, let episode { return ArrMetadataHint.EpisodeRef(season: season, episode: episode) }
+                }
+                if let string = value as? String {
+                    return episodeRef(fromToken: string)
+                }
+                return nil
+            }
+        }
+
+        return trimmed
+            .split { ",;| \n\t".contains($0) }
+            .compactMap { episodeRef(fromToken: String($0)) }
+    }
+
+    private func intValue(from dict: [String: Any], keys: [String]) -> Int? {
+        for key in keys {
+            if let number = dict[key] as? NSNumber { return number.intValue }
+            if let string = dict[key] as? String, let value = Int(string) { return value }
+            if let match = dict.first(where: { $0.key.caseInsensitiveCompare(key) == .orderedSame }) {
+                if let number = match.value as? NSNumber { return number.intValue }
+                if let string = match.value as? String, let value = Int(string) { return value }
+            }
+        }
+        return nil
+    }
+
+    private func episodeRef(fromToken token: String) -> ArrMetadataHint.EpisodeRef? {
+        let pattern = #"(?i)(?:s)?(\d{1,2})\s*(?:x|e)\s*(\d{1,3})"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: token, range: NSRange(token.startIndex..., in: token)),
+              match.numberOfRanges >= 3,
+              let seasonRange = Range(match.range(at: 1), in: token),
+              let episodeRange = Range(match.range(at: 2), in: token),
+              let season = Int(token[seasonRange]),
+              let episode = Int(token[episodeRange]) else {
+            return nil
+        }
+        return ArrMetadataHint.EpisodeRef(season: season, episode: episode)
+    }
+
     private func arrSource(from fields: [String: String]) -> ArrMetadataHint.Source {
         if fields.keys.contains(where: { $0.hasPrefix("radarr_") }) || firstValue(in: fields, keys: ["source"])?.lowercased() == "radarr" {
             return .radarr
         }
         if fields.keys.contains(where: { $0.hasPrefix("sonarr_") }) || firstValue(in: fields, keys: ["source"])?.lowercased() == "sonarr" {
             return .sonarr
+        }
+        if fields.keys.contains(where: { $0.hasPrefix("tsuname_") }) || firstValue(in: fields, keys: ["source"])?.lowercased() == "tsuname" {
+            return .tsuname
         }
         return .unknown
     }
@@ -538,7 +673,7 @@ final class LocalWebServer {
         switch source {
         case .radarr:
             return "movie"
-        case .sonarr:
+        case .sonarr, .tsuname:
             return "show"
         case .unknown:
             return "movie"

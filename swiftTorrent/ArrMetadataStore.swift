@@ -11,7 +11,13 @@ struct ArrMetadataHint: Codable, Hashable {
     enum Source: String, Codable {
         case radarr
         case sonarr
+        case tsuname
         case unknown
+    }
+
+    struct EpisodeRef: Codable, Hashable {
+        let season: Int
+        let episode: Int
     }
 
     let key: String
@@ -24,6 +30,10 @@ struct ArrMetadataHint: Codable, Hashable {
     let tmdbID: Int?
     let tvdbID: Int?
     let traktID: Int?
+    let scope: String?
+    let seasons: [Int]
+    let episodes: [EpisodeRef]
+    let releaseTitle: String?
     let updatedAt: Date
 
     init(
@@ -37,6 +47,10 @@ struct ArrMetadataHint: Codable, Hashable {
         tmdbID: Int?,
         tvdbID: Int?,
         traktID: Int?,
+        scope: String? = nil,
+        seasons: [Int] = [],
+        episodes: [EpisodeRef] = [],
+        releaseTitle: String? = nil,
         updatedAt: Date
     ) {
         self.key = key
@@ -49,13 +63,17 @@ struct ArrMetadataHint: Codable, Hashable {
         self.tmdbID = tmdbID
         self.tvdbID = tvdbID
         self.traktID = traktID
+        self.scope = scope
+        self.seasons = seasons
+        self.episodes = episodes
+        self.releaseTitle = releaseTitle
         self.updatedAt = updatedAt
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         key = try container.decode(String.self, forKey: .key)
-        source = try container.decode(Source.self, forKey: .source)
+        source = (try? container.decode(Source.self, forKey: .source)) ?? .unknown
         arrID = try container.decodeIfPresent(Int.self, forKey: .arrID)
         type = try container.decode(String.self, forKey: .type)
         title = try container.decode(String.self, forKey: .title)
@@ -64,6 +82,10 @@ struct ArrMetadataHint: Codable, Hashable {
         tmdbID = try container.decodeIfPresent(Int.self, forKey: .tmdbID)
         tvdbID = try container.decodeIfPresent(Int.self, forKey: .tvdbID)
         traktID = try container.decodeIfPresent(Int.self, forKey: .traktID)
+        scope = try container.decodeIfPresent(String.self, forKey: .scope)
+        seasons = try container.decodeIfPresent([Int].self, forKey: .seasons) ?? []
+        episodes = try container.decodeIfPresent([EpisodeRef].self, forKey: .episodes) ?? []
+        releaseTitle = try container.decodeIfPresent(String.self, forKey: .releaseTitle)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
 

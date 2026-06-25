@@ -720,8 +720,8 @@ final class TorrentEngine: ObservableObject {
         var overview: String?
         var posterURL: URL?
 
-        // Radarr/Sonarr already resolved the concrete media item. Do not run a
-        // title search here; that can incorrectly override known Arr metadata.
+        // Radarr, Sonarr, and Tsuname already resolved the concrete media item.
+        // Do not run a title search here; it can override known metadata.
         if let traktID {
             let trakt = TraktClient(clientID: "eb92f2cb922619e94a4ca0adcfd9572fc0397acb18a33cb6e65b7f2219983d9e")
             switch type {
@@ -1670,6 +1670,7 @@ final class TorrentEngine: ObservableObject {
 
         let saveRoot = URL(fileURLWithPath: savePath, isDirectory: true)
         let parsed = TorrentNameParser.parse(t.name)
+        let hint = arrHint(forLiveTorrentID: torrentID)
         let appSettings = AppSettings.shared
         let fallback = destinationOverride ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         let cleanupSettings = TorrentCleanup.CleanupSettings(
@@ -1683,7 +1684,7 @@ final class TorrentEngine: ObservableObject {
                 saveRoot: saveRoot,
                 filePaths: relPaths,
                 meta: meta,
-                parsedSeason: parsed.season,
+                parsedSeason: cleanupSeason(parsed: parsed, hint: hint),
                 category: t.category,
                 settings: cleanupSettings
         )
@@ -1720,12 +1721,14 @@ final class TorrentEngine: ObservableObject {
         )
 
         do {
+            let parsed = TorrentNameParser.parse(t.name)
+            let hint = arrHint(forLiveTorrentID: torrentID)
             let dest = try TorrentCleanup.run(
                 torrentID: torrentID,
                 saveRoot: saveRoot,
                 filePaths: relPaths,
                 meta: meta,
-                parsedSeason: TorrentNameParser.parse(t.name).season,
+                parsedSeason: cleanupSeason(parsed: parsed, hint: hint),
                 category: t.category,
                 settings: cleanupSettings
             )
@@ -1835,6 +1838,7 @@ final class TorrentEngine: ObservableObject {
         let saveRoot = URL(fileURLWithPath: savePath, isDirectory: true)
 
         let parsed = TorrentNameParser.parse(t.name)
+        let hint = await MainActor.run { self.arrHint(forLiveTorrentID: liveTorrentID) }
 
         let cleanupSettings = TorrentCleanup.CleanupSettings(
             moviesRoot: moviesRoot,
@@ -1856,7 +1860,7 @@ final class TorrentEngine: ObservableObject {
                 saveRoot: saveRoot,
                 filePaths: relPaths,
                 meta: meta,
-                parsedSeason: parsed.season,
+                parsedSeason: cleanupSeason(parsed: parsed, hint: hint),
                 category: t.category,
                 settings: cleanupSettings
             )
@@ -1871,6 +1875,27 @@ final class TorrentEngine: ObservableObject {
             notifyCleanupFailure(torrentName: t.name, reason: error.localizedDescription)
             return false
         }
+    }
+
+    private func cleanupSeason(parsed: TorrentNameParser.Parsed, hint: ArrMetadataHint?) -> Int? {
+        guard let hint else { return parsed.season }
+
+        let requestedSeasons = Set(hint.seasons)
+        if requestedSeasons.count == 1 {
+            return requestedSeasons.first
+        }
+
+        let episodeSeasons = Set(hint.episodes.map(\.season))
+        if episodeSeasons.count == 1 {
+            return episodeSeasons.first
+        }
+
+        let scope = hint.scope?.lowercased()
+        if scope == "show" || requestedSeasons.count > 1 || episodeSeasons.count > 1 {
+            return nil
+        }
+
+        return parsed.season
     }
 
     private func notifyCleanupFailure(torrentName: String, reason: String) {
