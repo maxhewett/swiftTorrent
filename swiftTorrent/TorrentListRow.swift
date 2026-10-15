@@ -38,6 +38,11 @@ struct TorrentListRow: View {
                     }
                     .font(.caption)
                 }
+
+                if engine.mediaByTorrentID[t.id]?.sources.contains("TheTVDB") == true {
+                    Link("Metadata provided by TheTVDB", destination: URL(string: "https://thetvdb.com")!)
+                        .font(.caption2)
+                }
             }
 
             Spacer()
@@ -55,6 +60,13 @@ struct TorrentListRow: View {
                 .allowsHitTesting(false)
         }
         .onAppear {
+            engine.enrichIfNeeded(for: t)
+        }
+        .onChange(of: t.name) { oldName, newName in
+            // Magnets can initially be exposed under a temporary name. Retry
+            // matching once libtorrent has resolved the torrent's real name.
+            guard oldName != newName,
+                  engine.mediaByTorrentID[t.id] == nil else { return }
             engine.enrichIfNeeded(for: t)
         }
     }
@@ -76,8 +88,8 @@ struct TorrentListRow: View {
 
     private var posterURL: URL? {
         if let local = engine.mediaByTorrentID[t.id]?.localPosterPath { return local }
-        if let cached = PosterCache.load(for: t.id) { return cached }
-        return engine.mediaByTorrentID[t.id]?.posterURL
+        if let remote = engine.mediaByTorrentID[t.id]?.posterURL { return remote }
+        return PosterCache.load(for: t.id)
     }
 
     private var posterView: some View {

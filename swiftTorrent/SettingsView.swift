@@ -281,6 +281,27 @@ private struct GeneralSettingsTab: View {
                     Toggle("Auto-cleanup when download completes", isOn: $settings.autoCleanupEnabled)
                         .help("Automatically move completed downloads to their destination folders.")
 
+                    Toggle("Periodically organize download folders", isOn: $settings.periodicCleanupEnabled)
+                        .help("Scan configured download and media folders for files that missed automatic cleanup.")
+
+                    HStack {
+                        Text("Cleanup frequency")
+                        Spacer()
+                        Picker("Cleanup frequency", selection: $settings.periodicCleanupIntervalMinutes) {
+                            Text("Every 15 minutes").tag(15)
+                            Text("Hourly").tag(60)
+                            Text("Every 6 hours").tag(360)
+                            Text("Daily").tag(1440)
+                        }
+                        .labelsHidden()
+                        .frame(width: 180)
+                        .disabled(!settings.periodicCleanupEnabled)
+                    }
+
+                    Text("Scans use the configured Movies and TV destinations, download folder, and saved torrent locations. Files already in the right place are left alone.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     Toggle("Filter non-media files automatically", isOn: $settings.autoFilterNonMediaFiles)
                         .help("Marks non-media files like exe, iso, and other junk as unwanted while still allowing video and subtitle files such as mkv, mp4, m4v, and srt.")
                 }
@@ -1040,6 +1061,69 @@ private struct IntegrationSettingsTab: View {
             }
             .id("integration.web")
             .trackedSection(id: "integration.web")
+
+            SettingsCard(
+                title: "Metadata Providers",
+                symbol: "sparkle.magnifyingglass",
+                subtitle: "Enabled providers are searched together. Matching records from both providers are merged and deduplicated."
+            ) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Toggle("Search Trakt", isOn: $settings.traktEnabled)
+                    if settings.traktEnabled {
+                        HStack {
+                            Text("Trakt Client ID")
+                            Spacer()
+                            SecureField("Enter your Trakt Client ID", text: $settings.traktClientID)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 300)
+                        }
+                    }
+
+                    Divider()
+
+                    Toggle("Search TheTVDB", isOn: $settings.tvdbEnabled)
+                    if settings.tvdbEnabled {
+                        HStack {
+                            Text("TheTVDB API Key")
+                            Spacer()
+                            SecureField("Enter your TheTVDB v4 API key", text: $settings.tvdbAPIKey)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 300)
+                        }
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Subscriber PIN")
+                                Text("Only needed for a subscriber supported key.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            SecureField("Optional", text: $settings.tvdbSubscriberPIN)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 300)
+                        }
+                        Link("TheTVDB API access and attribution terms", destination: URL(string: "https://thetvdb.com/api-information")!)
+                            .font(.caption)
+                    }
+
+                    Divider()
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Fanart API Key")
+                            Text("Optional. Used to find posters for matches.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        SecureField("Optional", text: $settings.fanartAPIKey)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 300)
+                    }
+                }
+            }
+            .id("integration.metadata")
+            .trackedSection(id: "integration.metadata")
 
             SettingsCard(
                 title: "Sonarr & Radarr (RPC)",

@@ -30,6 +30,7 @@ struct AddTorrentSheetView: View {
     @State private var overrideYearText = ""
     @State private var overrideType: OverrideType = .auto
     @State private var previewMetadata: MediaMetadata?
+    @State private var previewError: String?
     @State private var previewCandidates: [TorrentEngine.MetadataCandidate] = []
     @State private var previewState: PreviewState = .idle
     @State private var analyzeTaskID = UUID()
@@ -238,6 +239,17 @@ struct AddTorrentSheetView: View {
                                 .foregroundStyle(.secondary)
                         }
 
+                        if !previewMetadata.sources.isEmpty {
+                            Text("Matched via \(previewMetadata.sources.sorted().joined(separator: " + "))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if previewMetadata.sources.contains("TheTVDB") {
+                            Link("Metadata provided by TheTVDB", destination: URL(string: "https://thetvdb.com")!)
+                                .font(.caption2)
+                        }
+
                         if let overview = previewMetadata.overview, !overview.isEmpty {
                             Text(overview)
                                 .font(.callout)
@@ -275,6 +287,12 @@ struct AddTorrentSheetView: View {
                                 Text(parsedName)
                                     .font(.caption)
                                     .foregroundStyle(.tertiary)
+                            }
+                            if let previewError {
+                                Text(previewError)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
                             }
                         }
                         Spacer()
@@ -437,6 +455,7 @@ struct AddTorrentSheetView: View {
         guard !trimmedMagnet.isEmpty else {
             await MainActor.run {
                 previewMetadata = nil
+                previewError = nil
                 previewState = .idle
             }
             return
@@ -446,16 +465,18 @@ struct AddTorrentSheetView: View {
         guard !parsedName.isEmpty else {
             await MainActor.run {
                 previewMetadata = nil
+                previewError = "Could not read a title from this magnet link."
                 previewState = .failed
             }
             return
         }
 
         await MainActor.run {
+            previewError = nil
             previewState = .loading
         }
 
-        let matched = await engine.previewMetadata(
+        let result = await engine.previewMetadataLookup(
             query: overrideQueryValue,
             year: Int(overrideYearText),
             preferredType: selectedOverrideType,
@@ -463,8 +484,10 @@ struct AddTorrentSheetView: View {
         )
 
         await MainActor.run {
-            previewMetadata = matched
-            previewState = matched == nil ? .failed : .idle
+            previewMetadata = result.metadata
+            previewError = result.error
+            previewState = result.metadata == nil ? .failed : .idle
+            let matched = result.metadata
             if let matched, !categoryWasEdited {
                 applyAutomaticCategory(matched.type == .show ? "tv" : "movie")
             }

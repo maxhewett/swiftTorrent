@@ -24,4 +24,5 @@ struct MediaMetadata: Hashable {
     var posterURL: URL?
     var localPosterPath: URL?
     var displaySuffix: String?
+    var sources: Set<String> = []
 }

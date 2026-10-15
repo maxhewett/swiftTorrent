@@ -200,8 +200,14 @@ struct TorrentInspectorView: View {
                 )
             } else if engine.metadataLookupStateByID[torrent.id] == .failed {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("No match found", systemImage: "exclamationmark.magnifyingglass")
+                    Label(engine.metadataLookupErrorByID[torrent.id]?.hasPrefix("No suitable match") == true ? "No match found" : "Lookup failed", systemImage: "exclamationmark.magnifyingglass")
                         .foregroundStyle(.secondary)
+                    if let lookupError = engine.metadataLookupErrorByID[torrent.id] {
+                        Text(lookupError)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
                     Text(torrent.name)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -538,7 +544,7 @@ struct TorrentInspectorView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Search Override")
                     .font(.headline)
-                Text("Adjust the title, year, or media type when Trakt picks the wrong item or returns nothing.")
+                Text("Adjust the title, year, or media type when metadata providers pick the wrong item or return nothing.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
@@ -644,6 +650,9 @@ struct TorrentInspectorView: View {
                                     Text(candidate.type == .movie ? "Movie" : "Show")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+                                    Text(candidate.providers.sorted().joined(separator: " · "))
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
                                     if let overview = candidate.overview, !overview.isEmpty {
                                         Text(overview)
                                             .font(.caption)
@@ -676,17 +685,25 @@ struct TorrentInspectorView: View {
                         .strokeBorder(.white.opacity(0.08))
                 )
             } else if engine.metadataLookupStateByID[torrent.id] == .failed {
-                Text("No Trakt candidates found for the current title/year.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(18)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .strokeBorder(.white.opacity(0.08))
-                    )
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No suitable match was found from the enabled metadata providers.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let lookupError = engine.metadataLookupErrorByID[torrent.id] {
+                        Text(lookupError)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .strokeBorder(.white.opacity(0.08))
+                )
             }
         }
     }
@@ -1255,7 +1272,7 @@ private struct MediaInfoBlock: View {
     let onShowDetails: () -> Void
 
     private var resolvedPosterURL: URL? {
-        meta.localPosterPath ?? PosterCache.load(for: torrentID) ?? meta.posterURL
+        meta.localPosterPath ?? meta.posterURL ?? PosterCache.load(for: torrentID)
     }
 
     var body: some View {
@@ -1326,6 +1343,11 @@ private struct MediaInfoBlock: View {
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+
+                if meta.sources.contains("TheTVDB") {
+                    Link("Metadata provided by TheTVDB", destination: URL(string: "https://thetvdb.com")!)
+                        .font(.caption2)
+                }
             }
 
             Spacer(minLength: 0)
@@ -1392,7 +1414,7 @@ private struct MediaDetailsSheet: View {
     @State private var isLoadingSupplementalDetails = false
 
     private var resolvedPosterURL: URL? {
-        meta.localPosterPath ?? PosterCache.load(for: torrentID) ?? meta.posterURL
+        meta.localPosterPath ?? meta.posterURL ?? PosterCache.load(for: torrentID)
     }
 
     var body: some View {
@@ -1538,10 +1560,13 @@ private struct MediaDetailsSheet: View {
     @MainActor
     private func loadSupplementalDetails() async {
         guard let traktID = meta.traktID else { return }
+        let settings = AppSettings.shared
+        let clientID = settings.traktClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard settings.traktEnabled, !clientID.isEmpty else { return }
         isLoadingSupplementalDetails = true
         defer { isLoadingSupplementalDetails = false }
 
-        let client = TraktClient(clientID: "eb92f2cb922619e94a4ca0adcfd9572fc0397acb18a33cb6e65b7f2219983d9e")
+        let client = TraktClient(clientID: clientID)
         let id = String(traktID)
 
         switch meta.type {

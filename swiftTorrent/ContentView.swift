@@ -23,6 +23,8 @@ struct ContentView: View {
     @State private var selectionAnchorTorrentID: String?
     @State private var showingRecentRail = false
     @State private var showingSettings = false
+    @State private var showingCleanupPopover = false
+    @State private var cleanupEntryToFix: CleanupHistoryEntry?
     @State private var shouldRestoreRecentAfterSettings = false
     @State private var hostWindow: NSWindow?
     @State private var recentPanel = RecentDownloadsPanelController()
@@ -136,6 +138,10 @@ struct ContentView: View {
                 magnetImport.clear()
             }
         }
+        .sheet(item: $cleanupEntryToFix) { entry in
+            CleanupMatchFixSheet(entry: entry, engine: engine)
+                .frame(minWidth: 620, minHeight: 520)
+        }
         .onChange(of: magnetImport.pendingMagnet) { _, pendingMagnet in
             guard let pendingMagnet else { return }
             addSheetMagnet = pendingMagnet
@@ -176,6 +182,27 @@ struct ContentView: View {
                 showingAddSheet = true
             } label: {
                 Label("Add Torrent", systemImage: "plus")
+            }
+            .disabled(showingSettings)
+
+            Button {
+                showingCleanupPopover.toggle()
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "sparkles")
+                    if engine.isCleanupRunning {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text("Cleanup")
+                }
+            }
+            .accessibilityLabel("Cleanup")
+            .help(engine.cleanupActivityMessage ?? "Cleanup activity and folder history")
+            .popover(isPresented: $showingCleanupPopover, arrowEdge: .top) {
+                CleanupActivityPopover(engine: engine) { entry in
+                    cleanupEntryToFix = entry
+                }
+                .frame(width: 430, height: 540)
             }
             .disabled(showingSettings)
 
@@ -473,8 +500,8 @@ struct ContentView: View {
 
     private func posterURL(for torrent: TorrentRow) -> URL? {
         if let local = engine.mediaByTorrentID[torrent.id]?.localPosterPath { return local }
-        if let cached = PosterCache.load(for: torrent.id) { return cached }
-        return engine.mediaByTorrentID[torrent.id]?.posterURL
+        if let remote = engine.mediaByTorrentID[torrent.id]?.posterURL { return remote }
+        return PosterCache.load(for: torrent.id)
     }
 
     private func sortTorrents(_ torrents: [TorrentRow]) -> [TorrentRow] {

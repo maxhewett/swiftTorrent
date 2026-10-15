@@ -177,6 +177,7 @@ final class TorrentEngine: ObservableObject {
         let imdbID: String?
         let tvdbID: Int?
         var posterURL: URL?
+        var providers: Set<String> = []
     }
 
     enum MetadataLookupState: Equatable {
@@ -189,8 +190,11 @@ final class TorrentEngine: ObservableObject {
     @Published var filesByTorrentID: [String: [TorrentFile]] = [:]
     @Published var mediaByTorrentID: [String: MediaMetadata] = [:]
     @Published var metadataLookupStateByID: [String: MetadataLookupState] = [:]
+    @Published var metadataLookupErrorByID: [String: String] = [:]
     @Published var metadataCandidatesByID: [String: [MetadataCandidate]] = [:]
     @Published private(set) var transferSpeedSamplesByID: [String: [TransferSpeedSample]] = [:]
+    @Published private(set) var cleanupActivityCount = 0
+    @Published private(set) var cleanupActivityMessage: String?
     @Published var userFacingError: String?
 
     private var lastProgressByID: [String: Double] = [:]
@@ -206,6 +210,32 @@ final class TorrentEngine: ObservableObject {
 
     private var session: STSessionRef?
     private var timer: Timer?
+    private var periodicCleanupLastRunAt = Date.distantPast
+    private var isPeriodicCleanupRunning = false
+
+    var isCleanupRunning: Bool { cleanupActivityCount > 0 }
+
+    private func beginCleanupActivity(_ message: String) {
+        cleanupActivityCount += 1
+        cleanupActivityMessage = message
+    }
+
+    private func endCleanupActivity() {
+        cleanupActivityCount = max(0, cleanupActivityCount - 1)
+        if cleanupActivityCount == 0 { cleanupActivityMessage = nil }
+    }
+
+    func startManualCleanupScan() {
+        guard !isPeriodicCleanupRunning else { return }
+        isPeriodicCleanupRunning = true
+        periodicCleanupLastRunAt = Date()
+        UserDefaults.standard.set(periodicCleanupLastRunAt, forKey: "swiftTorrent.periodicCleanupLastRunAt")
+        beginCleanupActivity("Scanning configured folders…")
+        let storedItems = TorrentStore.load()
+        Task { [weak self] in
+            await self?.runPeriodicCleanup(storedItems: storedItems)
+        }
+    }
 
     // Debounced poll — coalesces rapid back-to-back poll requests into one
     private var pendingPoll: DispatchWorkItem?
@@ -234,6 +264,7 @@ final class TorrentEngine: ObservableObject {
     }
 
     init() {
+        periodicCleanupLastRunAt = UserDefaults.standard.object(forKey: "swiftTorrent.periodicCleanupLastRunAt") as? Date ?? .distantPast
         session = st_session_create(6881, 6891)
 
         // Load pause states first (STABLE keys)
@@ -418,6 +449,7 @@ final class TorrentEngine: ObservableObject {
     func refreshMetadata(for torrent: TorrentRow) {
         mediaByTorrentID[torrent.id] = nil
         metadataLookupStateByID[torrent.id] = .loading
+        metadataLookupErrorByID[torrent.id] = nil
 
         let parsed = TorrentNameParser.parse(torrent.name)
         let arrHint = arrHint(forLiveTorrentID: torrent.id)
@@ -440,6 +472,7 @@ final class TorrentEngine: ObservableObject {
                 )
                 guard var metaUnwrapped = meta else {
                     await MainActor.run {
+                        self.metadataLookupErrorByID[torrent.id] = "No suitable match was found from the enabled metadata providers for \(query)\(year.map { " (\($0))" } ?? "")."
                         self.metadataLookupStateByID[torrent.id] = .failed
                     }
                     return
@@ -451,16 +484,19 @@ final class TorrentEngine: ObservableObject {
                 }
 
                 do {
-                    let fanart = FanartClient(apiKey: "40d7d215cf9c6d77743eaf4e3e9942c8")
-                    if let poster = try await fanart.posterURL(for: metaUnwrapped) {
+                    var resolvedPoster = metaUnwrapped.posterURL
+                    if resolvedPoster == nil {
+                        resolvedPoster = try await configuredFanartPoster(for: metaUnwrapped)
+                    }
+                    if let poster = resolvedPoster {
                         metaUnwrapped.posterURL = poster
                         await MainActor.run {
                             guard self.mediaByTorrentID[torrent.id] != nil else { return }
                             self.mediaByTorrentID[torrent.id] = metaUnwrapped
                         }
 
-                        if PosterCache.load(for: torrent.id) == nil,
-                           let (data, _) = try? await URLSession.shared.data(from: poster),
+                        if let (data, response) = try? await URLSession.shared.data(from: poster),
+                           (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) == true,
                            let localURL = try? PosterCache.save(data, torrentID: torrent.id) {
                             metaUnwrapped.localPosterPath = localURL
                             await MainActor.run {
@@ -475,6 +511,7 @@ final class TorrentEngine: ObservableObject {
 
             } catch {
                 await MainActor.run {
+                    self.metadataLookupErrorByID[torrent.id] = error.localizedDescription
                     self.metadataLookupStateByID[torrent.id] = .failed
                 }
                 return
@@ -482,6 +519,7 @@ final class TorrentEngine: ObservableObject {
 
             if await MainActor.run(body: { self.mediaByTorrentID[torrent.id] == nil }) {
                 await MainActor.run {
+                    self.metadataLookupErrorByID[torrent.id] = "No suitable match was found from the enabled metadata providers."
                     self.metadataLookupStateByID[torrent.id] = .failed
                 }
             }
@@ -505,6 +543,7 @@ final class TorrentEngine: ObservableObject {
         PosterCache.remove(for: torrentID)
         mediaByTorrentID[torrentID] = nil
         metadataLookupStateByID[torrentID] = .idle
+        metadataLookupErrorByID[torrentID] = nil
         metadataCandidatesByID[torrentID] = []
         if let torrent = torrents.first(where: { $0.id == torrentID }) {
             refreshMetadata(for: torrent)
@@ -528,6 +567,18 @@ final class TorrentEngine: ObservableObject {
 
     func previewMetadata(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, displaySuffix: String? = nil) async -> MediaMetadata? {
         try? await resolvedMetadata(query: query, year: year, preferredType: preferredType, displaySuffix: displaySuffix)
+    }
+
+    func previewMetadataLookup(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, displaySuffix: String? = nil) async -> (metadata: MediaMetadata?, error: String?) {
+        do {
+            let metadata = try await resolvedMetadata(query: query, year: year, preferredType: preferredType, displaySuffix: displaySuffix)
+            if metadata == nil {
+                return (nil, "No suitable match was found from the enabled metadata providers for \(query)\(year.map { " (\($0))" } ?? "").")
+            }
+            return (metadata, nil)
+        } catch {
+            return (nil, error.localizedDescription)
+        }
     }
 
     func previewMetadataCandidates(query: String, year: Int?, preferredType: MediaMetadata.MediaType?) async -> [MetadataCandidate] {
@@ -692,7 +743,7 @@ final class TorrentEngine: ObservableObject {
         }
 
         let candidates = try await resolvedMetadataCandidates(query: query, year: year, preferredType: preferredType)
-        guard let best = candidates.first else { return nil }
+        guard let best = candidates.first, best.score >= 45 else { return nil }
         return MediaMetadata(
             type: best.type,
             title: best.title,
@@ -704,7 +755,8 @@ final class TorrentEngine: ObservableObject {
             overview: best.overview,
             posterURL: best.posterURL,
             localPosterPath: nil,
-            displaySuffix: displaySuffix
+            displaySuffix: displaySuffix,
+            sources: best.providers
         )
     }
 
@@ -722,8 +774,9 @@ final class TorrentEngine: ObservableObject {
 
         // Radarr, Sonarr, and Tsuname already resolved the concrete media item.
         // Do not run a title search here; it can override known metadata.
-        if let traktID {
-            let trakt = TraktClient(clientID: "eb92f2cb922619e94a4ca0adcfd9572fc0397acb18a33cb6e65b7f2219983d9e")
+        let traktClientID = AppSettings.shared.traktClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let traktID, AppSettings.shared.traktEnabled, !traktClientID.isEmpty {
+            let trakt = TraktClient(clientID: traktClientID)
             switch type {
             case .movie:
                 if let movie = try? await trakt.movie(id: String(traktID)) {
@@ -732,7 +785,7 @@ final class TorrentEngine: ObservableObject {
                     if imdbID == nil { imdbID = movie.ids.imdb }
                     if tvdbID == nil { tvdbID = movie.ids.tvdb }
                     overview = movie.overview
-                    posterURL = try? await FanartClient(apiKey: "40d7d215cf9c6d77743eaf4e3e9942c8").posterURL(for: MediaMetadata(
+                    posterURL = try? await configuredFanartPoster(for: MediaMetadata(
                         type: type,
                         title: title,
                         year: year,
@@ -753,7 +806,7 @@ final class TorrentEngine: ObservableObject {
                     if imdbID == nil { imdbID = show.ids.imdb }
                     if tvdbID == nil { tvdbID = show.ids.tvdb }
                     overview = show.overview
-                    posterURL = try? await FanartClient(apiKey: "40d7d215cf9c6d77743eaf4e3e9942c8").posterURL(for: MediaMetadata(
+                    posterURL = try? await configuredFanartPoster(for: MediaMetadata(
                         type: type,
                         title: title,
                         year: year,
@@ -785,50 +838,161 @@ final class TorrentEngine: ObservableObject {
         )
     }
 
+    private func configuredFanartPoster(for metadata: MediaMetadata) async throws -> URL? {
+        let key = AppSettings.shared.fanartAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return nil }
+        return try await FanartClient(apiKey: key).posterURL(for: metadata)
+    }
+
     private func resolvedMetadataCandidates(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, identifierHint: ArrMetadataHint? = nil) async throws -> [MetadataCandidate] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trakt = TraktClient(clientID: "eb92f2cb922619e94a4ca0adcfd9572fc0397acb18a33cb6e65b7f2219983d9e")
         var candidates: [MetadataCandidate] = []
+        var providerErrors: [String] = []
+        let settings = AppSettings.shared
+        let traktClientID = settings.traktClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tvdbAPIKey = settings.tvdbAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if preferredType != .show {
-            let exact = try await trakt.searchMovies(query: trimmed, year: year)
-            let fallback = year == nil ? [] : try await trakt.searchMovies(query: trimmed, year: nil)
-            let slugMatches = try await slugMovieMatches(trakt: trakt, query: trimmed, year: year)
-            let merged = mergeMovies(exact + fallback + slugMatches)
-            candidates.append(contentsOf: merged.map {
-                MetadataCandidate(id: "movie-\($0.ids.trakt ?? -1)-\($0.ids.tmdb ?? -1)-\($0.title)-\($0.year ?? -1)", title: $0.title, year: $0.year, type: .movie, overview: $0.overview, score: scoreMovie($0, query: trimmed, year: year, identifierHint: identifierHint), traktID: $0.ids.trakt, tmdbID: $0.ids.tmdb, imdbID: $0.ids.imdb, tvdbID: $0.ids.tvdb, posterURL: nil)
-            })
+        if settings.traktEnabled {
+            if traktClientID.isEmpty {
+                providerErrors.append("Trakt is enabled but its Client ID is missing in Settings.")
+            } else {
+                do {
+                    let trakt = TraktClient(clientID: traktClientID)
+                    if preferredType != .show {
+                        let exact = try await trakt.searchMovies(query: trimmed, year: year)
+                        let fallback = year == nil ? [] : try await trakt.searchMovies(query: trimmed, year: nil)
+                        let slugMatches = try await slugMovieMatches(trakt: trakt, query: trimmed, year: year)
+                        let merged = mergeMovies(exact + fallback + slugMatches)
+                        candidates.append(contentsOf: merged.map {
+                            MetadataCandidate(id: "movie-\($0.ids.trakt ?? -1)-\($0.ids.tmdb ?? -1)-\($0.title)-\($0.year ?? -1)", title: $0.title, year: $0.year, type: .movie, overview: $0.overview, score: scoreMovie($0, query: trimmed, year: year, identifierHint: identifierHint), traktID: $0.ids.trakt, tmdbID: $0.ids.tmdb, imdbID: $0.ids.imdb, tvdbID: $0.ids.tvdb, posterURL: nil, providers: ["Trakt"])
+                        })
+                    }
+
+                    if preferredType != .movie {
+                        let exact = try await trakt.searchShows(query: trimmed, year: year)
+                        let fallback = year == nil ? [] : try await trakt.searchShows(query: trimmed, year: nil)
+                        let slugMatches = try await slugShowMatches(trakt: trakt, query: trimmed, year: year)
+                        let merged = mergeShows(exact + fallback + slugMatches)
+                        candidates.append(contentsOf: merged.map {
+                            MetadataCandidate(id: "show-\($0.ids.trakt ?? -1)-\($0.ids.tmdb ?? -1)-\($0.title)-\($0.year ?? -1)", title: $0.title, year: $0.year, type: .show, overview: $0.overview, score: scoreShow($0, query: trimmed, year: year, identifierHint: identifierHint), traktID: $0.ids.trakt, tmdbID: $0.ids.tmdb, imdbID: $0.ids.imdb, tvdbID: $0.ids.tvdb, posterURL: nil, providers: ["Trakt"])
+                        })
+                    }
+                } catch {
+                    providerErrors.append("Trakt: \(error.localizedDescription)")
+                }
+            }
         }
 
-        if preferredType != .movie {
-            let exact = try await trakt.searchShows(query: trimmed, year: year)
-            let fallback = year == nil ? [] : try await trakt.searchShows(query: trimmed, year: nil)
-            let slugMatches = try await slugShowMatches(trakt: trakt, query: trimmed, year: year)
-            let merged = mergeShows(exact + fallback + slugMatches)
-            candidates.append(contentsOf: merged.map {
-                MetadataCandidate(id: "show-\($0.ids.trakt ?? -1)-\($0.ids.tmdb ?? -1)-\($0.title)-\($0.year ?? -1)", title: $0.title, year: $0.year, type: .show, overview: $0.overview, score: scoreShow($0, query: trimmed, year: year, identifierHint: identifierHint), traktID: $0.ids.trakt, tmdbID: $0.ids.tmdb, imdbID: $0.ids.imdb, tvdbID: $0.ids.tvdb, posterURL: nil)
-            })
+        if settings.tvdbEnabled {
+            guard !tvdbAPIKey.isEmpty else {
+                providerErrors.append("TheTVDB is enabled but its API key is missing in Settings.")
+                if candidates.isEmpty { throw MetadataProviderError.lookup(providerErrors.joined(separator: "\n")) }
+                return await finishMetadataCandidates(candidates)
+            }
+
+            do {
+                let types: [TVDBClient.EntityType]
+                switch preferredType {
+                case .movie: types = [.movie]
+                case .show: types = [.series]
+                case nil: types = [.movie, .series]
+                }
+                let tvdb = TVDBClient(apiKey: tvdbAPIKey, subscriberPIN: settings.tvdbSubscriberPIN)
+                let found = try await tvdb.search(query: trimmed, year: year, types: types)
+                candidates.append(contentsOf: found.map { item in
+                    MetadataCandidate(
+                        id: "tvdb-\(item.type == .movie ? "movie" : "series")-\(item.tvdbID ?? -1)-\(item.title)-\(item.year ?? -1)",
+                        title: item.title,
+                        year: item.year,
+                        type: item.type,
+                        overview: item.overview,
+                        score: scoreTitle(item.title, query: trimmed, year: year, candidateYear: item.year),
+                        traktID: nil,
+                        tmdbID: item.tmdbID,
+                        imdbID: item.imdbID,
+                        tvdbID: item.tvdbID,
+                        posterURL: item.posterURL,
+                        providers: ["TheTVDB"]
+                    )
+                })
+            } catch {
+                providerErrors.append("TheTVDB: \(error.localizedDescription)")
+            }
         }
 
-        let withPosters = await metadataCandidatePosters(candidates)
+        if !settings.traktEnabled && !settings.tvdbEnabled {
+            providerErrors.append("Enable at least one metadata provider in Settings.")
+        }
+        if candidates.isEmpty, !providerErrors.isEmpty {
+            throw MetadataProviderError.lookup(providerErrors.joined(separator: "\n"))
+        }
+
+        return await finishMetadataCandidates(candidates)
+    }
+
+    private func finishMetadataCandidates(_ candidates: [MetadataCandidate]) async -> [MetadataCandidate] {
+        let merged = mergeMetadataCandidates(candidates)
+        let withPosters = await metadataCandidatePosters(merged)
         return Array(withPosters.sorted {
             let lhsScore = $0.score + ($0.posterURL == nil ? 0 : 18)
             let rhsScore = $1.score + ($1.posterURL == nil ? 0 : 18)
-            if lhsScore == rhsScore {
-                return ($0.year ?? 0) > ($1.year ?? 0)
-            }
+            if lhsScore == rhsScore { return ($0.year ?? 0) > ($1.year ?? 0) }
             return lhsScore > rhsScore
         }.prefix(10))
     }
 
+    private func mergeMetadataCandidates(_ candidates: [MetadataCandidate]) -> [MetadataCandidate] {
+        var merged: [MetadataCandidate] = []
+        for candidate in candidates {
+            let index = merged.firstIndex { existing in
+                guard existing.type == candidate.type else { return false }
+                if let id = existing.traktID, candidate.traktID == id { return true }
+                if let id = existing.tmdbID, candidate.tmdbID == id { return true }
+                if let id = existing.tvdbID, candidate.tvdbID == id { return true }
+                if let id = normalizedIMDBID(existing.imdbID), normalizedIMDBID(candidate.imdbID) == id { return true }
+                return existing.year == candidate.year && normalizeLookupText(existing.title) == normalizeLookupText(candidate.title)
+            }
+            guard let index else {
+                merged.append(candidate)
+                continue
+            }
+            let existing = merged[index]
+            merged[index] = MetadataCandidate(
+                id: existing.id,
+                title: existing.title,
+                year: existing.year ?? candidate.year,
+                type: existing.type,
+                overview: existing.overview ?? candidate.overview,
+                score: max(existing.score, candidate.score),
+                traktID: existing.traktID ?? candidate.traktID,
+                tmdbID: existing.tmdbID ?? candidate.tmdbID,
+                imdbID: existing.imdbID ?? candidate.imdbID,
+                tvdbID: existing.tvdbID ?? candidate.tvdbID,
+                posterURL: existing.posterURL ?? candidate.posterURL,
+                providers: existing.providers.union(candidate.providers)
+            )
+        }
+        return merged
+    }
+
+    private enum MetadataProviderError: LocalizedError {
+        case lookup(String)
+        var errorDescription: String? {
+            if case .lookup(let message) = self { return message }
+            return "Metadata lookup failed."
+        }
+    }
+
     private func metadataCandidatePosters(_ candidates: [MetadataCandidate]) async -> [MetadataCandidate] {
         guard !candidates.isEmpty else { return [] }
-        let fanart = FanartClient(apiKey: "40d7d215cf9c6d77743eaf4e3e9942c8")
+        let fanartKey = AppSettings.shared.fanartAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         var results = candidates
 
         await withTaskGroup(of: (String, URL?).self) { group in
             for candidate in candidates {
+                guard candidate.posterURL == nil, !fanartKey.isEmpty else { continue }
                 group.addTask {
+                    let fanart = FanartClient(apiKey: fanartKey)
                     let metadata = MediaMetadata(type: candidate.type, title: candidate.title, year: candidate.year, traktID: candidate.traktID, tmdbID: candidate.tmdbID, imdbID: candidate.imdbID, tvdbID: candidate.tvdbID, overview: candidate.overview, posterURL: nil, localPosterPath: nil, displaySuffix: nil)
                     return (candidate.id, try? await fanart.posterURL(for: metadata))
                 }
@@ -1173,6 +1337,7 @@ final class TorrentEngine: ObservableObject {
     private func poll() {
         guard let s = session else { return }
         let storedItems = TorrentStore.load()
+        schedulePeriodicCleanupIfNeeded(storedItems: storedItems)
 
         let maxItems = 200
         var raw = Array(repeating: STTorrentStatus(), count: maxItems)
@@ -1719,31 +1884,387 @@ final class TorrentEngine: ObservableObject {
             mode: .move,
             collision: .rename
         )
+        let parsed = TorrentNameParser.parse(t.name)
+        let hint = arrHint(forLiveTorrentID: torrentID)
+        beginCleanupActivity("Organizing \(t.name)…")
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.endCleanupActivity() }
+            do {
+                let destination = try await self.performCleanupOffMain(
+                    torrentID: torrentID,
+                    saveRoot: saveRoot,
+                    filePaths: relPaths,
+                    meta: meta,
+                    parsedSeason: self.cleanupSeason(parsed: parsed, hint: hint),
+                    category: t.category,
+                    settings: cleanupSettings
+                )
+                let stable = self.stableKey(forLiveTorrentID: torrentID)
+                appSettings.setCleanedDestination(destination.path, for: stable)
+                appSettings.markCleaned(stable)
+                self.recordCleanupHistory(CleanupHistoryEntry(
+                    id: UUID(), itemName: meta.title,
+                    sourceRootPath: saveRoot.path, relativePaths: relPaths,
+                    category: t.category, query: meta.title, year: meta.year,
+                    typeRaw: meta.type == .movie ? "movie" : "show",
+                    destinationPath: destination.path, errorMessage: nil,
+                    succeeded: true, updatedAt: Date()
+                ))
+            } catch {
+                self.userFacingError = "Cleanup failed: \(error.localizedDescription)"
+                self.recordCleanupHistory(CleanupHistoryEntry(
+                    id: UUID(), itemName: t.name,
+                    sourceRootPath: saveRoot.path, relativePaths: relPaths,
+                    category: t.category, query: meta.title, year: meta.year,
+                    typeRaw: meta.type == .movie ? "movie" : "show",
+                    destinationPath: nil, errorMessage: error.localizedDescription,
+                    succeeded: false, updatedAt: Date()
+                ))
+                AppNotificationCenter.shared.send(
+                    .cleanupFailure,
+                    title: "Cleanup failed",
+                    body: "\(t.name): \(error.localizedDescription)",
+                    identifier: "cleanup-failed-\(torrentID)"
+                )
+            }
+        }
+    }
+
+    private func performCleanupOffMain(
+        torrentID: String,
+        saveRoot: URL,
+        filePaths: [String],
+        meta: MediaMetadata,
+        parsedSeason: Int?,
+        category: String?,
+        settings: TorrentCleanup.CleanupSettings
+    ) async throws -> URL {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                let sourceAccess = saveRoot.startAccessingSecurityScopedResource()
+                let moviesAccess = settings.moviesRoot.startAccessingSecurityScopedResource()
+                let tvAccess = settings.tvRoot.startAccessingSecurityScopedResource()
+                defer {
+                    if sourceAccess { saveRoot.stopAccessingSecurityScopedResource() }
+                    if moviesAccess { settings.moviesRoot.stopAccessingSecurityScopedResource() }
+                    if tvAccess { settings.tvRoot.stopAccessingSecurityScopedResource() }
+                }
+                do {
+                    let destination = try TorrentCleanup.run(
+                        torrentID: torrentID, saveRoot: saveRoot, filePaths: filePaths,
+                        meta: meta, parsedSeason: parsedSeason, category: category, settings: settings
+                    )
+                    continuation.resume(returning: destination)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func recordCleanupHistory(_ entry: CleanupHistoryEntry) {
+        AppSettings.shared.recordCleanupHistory(entry)
+    }
+
+    private struct PeriodicCleanupRoot {
+        let url: URL
+        var category: String?
+        var hasConflictingCategories = false
+    }
+
+    private func schedulePeriodicCleanupIfNeeded(storedItems: [StoredTorrent]) {
+        let settings = AppSettings.shared
+        guard settings.periodicCleanupEnabled, !isPeriodicCleanupRunning else { return }
+        let interval = TimeInterval(settings.periodicCleanupIntervalMinutes * 60)
+        guard Date().timeIntervalSince(periodicCleanupLastRunAt) >= interval else { return }
+
+        isPeriodicCleanupRunning = true
+        periodicCleanupLastRunAt = Date()
+        UserDefaults.standard.set(periodicCleanupLastRunAt, forKey: "swiftTorrent.periodicCleanupLastRunAt")
+        beginCleanupActivity("Scanning configured folders…")
+        Task { [weak self] in
+            await self?.runPeriodicCleanup(storedItems: storedItems)
+        }
+    }
+
+    private func runPeriodicCleanup(storedItems: [StoredTorrent]) async {
+        defer {
+            isPeriodicCleanupRunning = false
+            endCleanupActivity()
+        }
+        let appSettings = AppSettings.shared
+        guard let moviesRoot = appSettings.moviesURL(), let tvRoot = appSettings.tvURL() else {
+            let message = "Set both Movies and TV destinations in Settings first."
+            AppSettings.shared.recordCleanupHistory(CleanupHistoryEntry(
+                id: UUID(), itemName: "Folder scan", sourceRootPath: "Settings",
+                relativePaths: [], category: nil, query: "", year: nil, typeRaw: nil,
+                destinationPath: nil, errorMessage: message, succeeded: false, updatedAt: Date()
+            ))
+            RunDiagnostics.shared.log("Periodic cleanup skipped: \(message)", level: "WARNING")
+            return
+        }
+
+        var roots: [String: PeriodicCleanupRoot] = [:]
+        func addRoot(_ url: URL?, category: String?) {
+            guard let url else { return }
+            let normalized = url.standardizedFileURL
+            let key = normalized.path
+            if var existing = roots[key] {
+                if let current = existing.category?.lowercased(), let incoming = category?.lowercased(), current != incoming {
+                    existing.category = nil
+                    existing.hasConflictingCategories = true
+                } else if existing.category == nil, !existing.hasConflictingCategories {
+                    existing.category = category
+                }
+                roots[key] = existing
+            } else {
+                roots[key] = PeriodicCleanupRoot(url: normalized, category: category)
+            }
+        }
+
+        addRoot(appSettings.downloadURL() ?? appSettings.downloadPathForDisplay.map { URL(fileURLWithPath: $0, isDirectory: true) }, category: nil)
+        for item in storedItems {
+            addRoot(URL(fileURLWithPath: item.savePath, isDirectory: true), category: item.category)
+        }
+        addRoot(moviesRoot, category: "movie")
+        addRoot(tvRoot, category: "tv")
+
+        var incompleteFiles: Set<String> = []
+        for torrent in torrents where torrent.progress < 0.999 {
+            if filesByTorrentID[torrent.id] == nil { refreshFiles(for: torrent.id) }
+            guard let savePath = savePath(forLiveTorrentID: torrent.id) else { continue }
+            let saveRoot = URL(fileURLWithPath: savePath, isDirectory: true).standardizedFileURL
+            for file in (filesByTorrentID[torrent.id] ?? []).filter({ !$0.isSkipped }) {
+                let path = saveRoot.appendingPathComponent(file.path.replacingOccurrences(of: "\\", with: "/")).standardizedFileURL.path
+                incompleteFiles.insert(path)
+            }
+        }
+
+        let cleanupSettings = TorrentCleanup.CleanupSettings(
+            moviesRoot: moviesRoot,
+            tvRoot: tvRoot,
+            mode: .move,
+            collision: .rename
+        )
+        let nestedRoots = Set(roots.keys)
+        let scanFilter = PeriodicCleanupScanner.Filter(
+            autoFilterNonMediaFiles: appSettings.autoFilterNonMediaFiles,
+            exclusionRules: appSettings.fileExclusionRules
+        )
+        for root in roots.values.sorted(by: { $0.url.path < $1.url.path }) {
+            let hasAccess = root.url.startAccessingSecurityScopedResource()
+            defer { if hasAccess { root.url.stopAccessingSecurityScopedResource() } }
+            let category = root.category ?? inferredCleanupCategory(from: root.url.path)
+            let scanRoot = root.url
+            let scanResult = await Task.detached(priority: .utility) {
+                PeriodicCleanupScanner.scan(in: scanRoot, category: category, excludedRoots: nestedRoots, filter: scanFilter)
+            }.value
+            if let error = scanResult.errorMessage {
+                AppSettings.shared.recordCleanupHistory(CleanupHistoryEntry(
+                    id: UUID(), itemName: root.url.lastPathComponent,
+                    sourceRootPath: root.url.path, relativePaths: [], category: category,
+                    query: "", year: nil, typeRaw: nil, destinationPath: nil,
+                    errorMessage: error, succeeded: false, updatedAt: Date()
+                ))
+                RunDiagnostics.shared.log("Periodic cleanup could not scan \(root.url.path): \(error)", level: "WARNING")
+            }
+            let rootFilePayloads = scanResult.payloads.filter {
+                $0.root.standardizedFileURL.path == scanRoot.standardizedFileURL.path && $0.relativePaths.count == 1
+            }
+            let folderPayloads = scanResult.payloads.filter {
+                $0.root.standardizedFileURL.path != scanRoot.standardizedFileURL.path || $0.relativePaths.count != 1
+            }
+            let groupedRootFiles = Dictionary(grouping: rootFilePayloads) { payload in
+                let parsed = TorrentNameParser.parse(payload.name)
+                return "\(parsed.query.lowercased())|\(parsed.year ?? 0)|\(parsed.inferredType == .show ? "show" : "")"
+            }
+            let consolidatedRootFiles = groupedRootFiles.values.compactMap { files -> PeriodicCleanupPayload? in
+                guard let first = files.first else { return nil }
+                let parsed = TorrentNameParser.parse(first.name)
+                return PeriodicCleanupPayload(
+                    root: scanRoot,
+                    name: parsed.query,
+                    relativePaths: files.flatMap(\.relativePaths).sorted(),
+                    category: category
+                )
+            }
+            for payload in folderPayloads + consolidatedRootFiles {
+                let safePaths = payload.relativePaths.filter {
+                    !incompleteFiles.contains(payload.root.appendingPathComponent($0).standardizedFileURL.path)
+                }
+                guard !safePaths.isEmpty else { continue }
+                cleanupActivityMessage = "Checking \(payload.name)…"
+                await organizePeriodicPayload(payload, relativePaths: safePaths, cleanupSettings: cleanupSettings)
+            }
+        }
+        RunDiagnostics.shared.log("Periodic folder cleanup finished scanning \(roots.count) configured folder(s).", level: "INFO")
+    }
+
+    private func inferredCleanupCategory(from path: String) -> String? {
+        for component in URL(fileURLWithPath: path).pathComponents.reversed() {
+            let value = component.lowercased()
+            if ["tv", "shows", "series", "sonarr"].contains(value) { return "tv" }
+            if ["movie", "movies", "radarr"].contains(value) { return "movie" }
+        }
+        return nil
+    }
+
+    private func organizePeriodicPayload(
+        _ payload: PeriodicCleanupPayload,
+        relativePaths: [String],
+        cleanupSettings: TorrentCleanup.CleanupSettings
+    ) async {
+        let folderParsed = TorrentNameParser.parse(payload.name)
+        let fileParses = relativePaths.map { TorrentNameParser.parse($0) }
+        let explicitType: MediaMetadata.MediaType?
+        switch payload.category?.lowercased() {
+        case "tv", "show", "shows", "series", "sonarr": explicitType = .show
+        case "movie", "movies", "radarr": explicitType = .movie
+        default: explicitType = nil
+        }
+        let type = explicitType ?? folderParsed.inferredType ?? (fileParses.contains(where: { $0.inferredType == .show }) ? .show : .movie)
+        let genericFolderName = folderParsed.query.range(of: #"^(season|series|disc|cd|dvd|tv|movies?)\s*\d*$"#, options: [.regularExpression, .caseInsensitive]) != nil
+        let fileQuery = fileParses.map(\.query).filter { !$0.isEmpty }
+        let query: String
+        if genericFolderName {
+            let parentParsed = TorrentNameParser.parse(payload.root.deletingLastPathComponent().lastPathComponent)
+            let parentIsGeneric = parentParsed.query.range(of: #"^(season|series|disc|cd|dvd|tv|movies?|downloads?)\s*\d*$"#, options: [.regularExpression, .caseInsensitive]) != nil
+            if !parentIsGeneric, !parentParsed.query.isEmpty {
+                query = parentParsed.query
+            } else if let common = Dictionary(grouping: fileQuery, by: { $0.lowercased() }).max(by: { $0.value.count < $1.value.count })?.value.first {
+                query = common
+            } else {
+                query = folderParsed.query
+            }
+        } else {
+            query = folderParsed.query
+        }
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let year = folderParsed.year ?? fileParses.compactMap(\.year).first
 
         do {
-            let parsed = TorrentNameParser.parse(t.name)
-            let hint = arrHint(forLiveTorrentID: torrentID)
-            let dest = try TorrentCleanup.run(
-                torrentID: torrentID,
-                saveRoot: saveRoot,
-                filePaths: relPaths,
-                meta: meta,
-                parsedSeason: cleanupSeason(parsed: parsed, hint: hint),
-                category: t.category,
-                settings: cleanupSettings
-            )
-            print("Cleanup OK -> \(dest.path)")
-            let stable = stableKey(forLiveTorrentID: torrentID)
-            appSettings.setCleanedDestination(dest.path, for: stable)
-            appSettings.markCleaned(stable)
+            guard let metadata = try await resolvedMetadata(query: query, year: year, preferredType: type, displaySuffix: nil) else {
+                let message = "No suitable metadata match was found for \(query)."
+                recordFolderCleanup(payload, relativePaths: relativePaths, query: query, year: year, type: type, destination: nil, error: message)
+                RunDiagnostics.shared.log("Periodic cleanup found no metadata match for \(payload.name).", level: "WARNING")
+                return
+            }
+            var bySeason: [String: [String]] = [:]
+            for path in relativePaths {
+                let parsed = TorrentNameParser.parse(path)
+                let season = parsed.season ?? folderParsed.season
+                bySeason[String(season ?? -1), default: []].append(path)
+            }
+            for (seasonKey, files) in bySeason {
+                let season = Int(seasonKey).flatMap { $0 >= 0 ? $0 : nil }
+                let sourceFiles = files.map { payload.root.appendingPathComponent($0).standardizedFileURL }
+                let destination = try await performCleanupOffMain(
+                    torrentID: "periodic-\(payload.root.path)", saveRoot: payload.root,
+                    filePaths: files, meta: metadata,
+                    parsedSeason: metadata.type == .show ? season : nil,
+                    category: payload.category, settings: cleanupSettings
+                )
+                if sourceFiles.contains(where: { !FileManager.default.fileExists(atPath: $0.path) }) {
+                    recordFolderCleanup(payload, relativePaths: files, query: query, year: year, type: type, destination: destination.path, error: nil)
+                }
+            }
         } catch {
-            userFacingError = "Cleanup failed: \(error.localizedDescription)"
-            AppNotificationCenter.shared.send(
-                .cleanupFailure,
-                title: "Cleanup failed",
-                body: "\(t.name): \(error.localizedDescription)",
-                identifier: "cleanup-failed-\(torrentID)"
-            )
+            recordFolderCleanup(payload, relativePaths: relativePaths, query: query, year: year, type: type, destination: nil, error: error.localizedDescription)
+            RunDiagnostics.shared.log("Periodic cleanup failed for \(payload.name): \(error.localizedDescription)", level: "WARNING")
+        }
+    }
+
+    private func recordFolderCleanup(
+        _ payload: PeriodicCleanupPayload,
+        relativePaths: [String],
+        query: String,
+        year: Int?,
+        type: MediaMetadata.MediaType,
+        destination: String?,
+        error: String?
+    ) {
+        AppSettings.shared.recordCleanupHistory(CleanupHistoryEntry(
+            id: UUID(), itemName: payload.name,
+            sourceRootPath: payload.root.path, relativePaths: relativePaths,
+            category: payload.category, query: query, year: year,
+            typeRaw: type == .movie ? "movie" : "show",
+            destinationPath: destination, errorMessage: error,
+            succeeded: error == nil, updatedAt: Date()
+        ))
+    }
+
+    func retryFolderCleanup(
+        entry: CleanupHistoryEntry,
+        query: String,
+        year: Int?,
+        type: MediaMetadata.MediaType,
+        selectedCandidate: MetadataCandidate?
+    ) async -> String? {
+        let appSettings = AppSettings.shared
+        guard let moviesRoot = appSettings.moviesURL(), let tvRoot = appSettings.tvURL() else {
+            return "Set both Movies and TV destinations in Settings first."
+        }
+        let cleanedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedQuery.isEmpty else { return "Enter a title to search for." }
+        beginCleanupActivity("Organizing \(entry.itemName)…")
+        defer { endCleanupActivity() }
+
+        do {
+            let metadata: MediaMetadata
+            if let selectedCandidate {
+                metadata = MediaMetadata(
+                    type: selectedCandidate.type, title: selectedCandidate.title, year: selectedCandidate.year,
+                    traktID: selectedCandidate.traktID, tmdbID: selectedCandidate.tmdbID,
+                    imdbID: selectedCandidate.imdbID, tvdbID: selectedCandidate.tvdbID,
+                    overview: selectedCandidate.overview, posterURL: selectedCandidate.posterURL,
+                    localPosterPath: nil, displaySuffix: nil, sources: selectedCandidate.providers
+                )
+            } else if let matched = try await resolvedMetadata(query: cleanedQuery, year: year, preferredType: type, displaySuffix: nil) {
+                metadata = matched
+            } else {
+                return "No suitable metadata match was found for \(cleanedQuery)."
+            }
+            let settings = TorrentCleanup.CleanupSettings(moviesRoot: moviesRoot, tvRoot: tvRoot, mode: .move, collision: .rename)
+            let sourceRoot = URL(fileURLWithPath: entry.sourceRootPath, isDirectory: true)
+            var groupedPaths: [String: [String]] = [:]
+            for path in entry.relativePaths {
+                let season = metadata.type == .show ? TorrentNameParser.parse(path).season : nil
+                groupedPaths[String(season ?? -1), default: []].append(path)
+            }
+            var destinations: [String] = []
+            for (seasonKey, paths) in groupedPaths {
+                let season = Int(seasonKey).flatMap { $0 >= 0 ? $0 : nil }
+                let destination = try await performCleanupOffMain(
+                    torrentID: "manual-folder-\(entry.id.uuidString)",
+                    saveRoot: sourceRoot,
+                    filePaths: paths,
+                    meta: metadata,
+                    parsedSeason: season,
+                    category: entry.category,
+                    settings: settings
+                )
+                destinations.append(destination.path)
+            }
+            AppSettings.shared.recordCleanupHistory(CleanupHistoryEntry(
+                id: entry.id, itemName: metadata.title,
+                sourceRootPath: entry.sourceRootPath, relativePaths: entry.relativePaths,
+                category: entry.category, query: cleanedQuery, year: metadata.year,
+                typeRaw: metadata.type == .movie ? "movie" : "show",
+                destinationPath: destinations.sorted().joined(separator: "\n"), errorMessage: nil,
+                succeeded: true, updatedAt: Date()
+            ))
+            return nil
+        } catch {
+            AppSettings.shared.recordCleanupHistory(CleanupHistoryEntry(
+                id: entry.id, itemName: entry.itemName,
+                sourceRootPath: entry.sourceRootPath, relativePaths: entry.relativePaths,
+                category: entry.category, query: cleanedQuery, year: year,
+                typeRaw: type == .movie ? "movie" : "show",
+                destinationPath: nil, errorMessage: error.localizedDescription,
+                succeeded: false, updatedAt: Date()
+            ))
+            return error.localizedDescription
         }
     }
 
@@ -1806,6 +2327,8 @@ final class TorrentEngine: ObservableObject {
     }
 
     private func runCleanupUsingSettings(liveTorrentID: String) async -> Bool {
+        beginCleanupActivity("Organizing completed download…")
+        defer { endCleanupActivity() }
         let settings = AppSettings.shared
 
         guard let t = await MainActor.run(body: { self.torrents.first(where: { $0.id == liveTorrentID }) }) else { return false }
@@ -1823,7 +2346,7 @@ final class TorrentEngine: ObservableObject {
 
         await MainActor.run { self.refreshFiles(for: liveTorrentID) }
         let files = await MainActor.run { self.filesByTorrentID[liveTorrentID] ?? [] }
-        let relPaths = files.map(\.path)
+        let relPaths = files.filter { !$0.isSkipped }.map(\.path)
         if relPaths.isEmpty {
             print("Cleanup: no file list.")
             notifyCleanupFailure(torrentName: t.name, reason: "No downloadable files were available.")
@@ -1847,15 +2370,8 @@ final class TorrentEngine: ObservableObject {
             collision: .rename
         )
 
-        let moviesAccess = moviesRoot.startAccessingSecurityScopedResource()
-        let tvAccess = tvRoot.startAccessingSecurityScopedResource()
-        defer {
-            if moviesAccess { moviesRoot.stopAccessingSecurityScopedResource() }
-            if tvAccess { tvRoot.stopAccessingSecurityScopedResource() }
-        }
-
         do {
-            let dest = try TorrentCleanup.run(
+            let dest = try await performCleanupOffMain(
                 torrentID: liveTorrentID,
                 saveRoot: saveRoot,
                 filePaths: relPaths,
@@ -1868,10 +2384,23 @@ final class TorrentEngine: ObservableObject {
             let stable = stableKey(forLiveTorrentID: liveTorrentID)
             await MainActor.run {
                 AppSettings.shared.setCleanedDestination(dest.path, for: stable)
+                AppSettings.shared.recordCleanupHistory(CleanupHistoryEntry(
+                    id: UUID(), itemName: meta.title, sourceRootPath: saveRoot.path,
+                    relativePaths: relPaths, category: t.category, query: meta.title,
+                    year: meta.year, typeRaw: meta.type == .movie ? "movie" : "show",
+                    destinationPath: dest.path, errorMessage: nil, succeeded: true, updatedAt: Date()
+                ))
             }
             return true
         } catch {
             print("Cleanup failed: \(error.localizedDescription)")
+            AppSettings.shared.recordCleanupHistory(CleanupHistoryEntry(
+                id: UUID(), itemName: t.name, sourceRootPath: saveRoot.path,
+                relativePaths: relPaths, category: t.category, query: meta.title,
+                year: meta.year, typeRaw: meta.type == .movie ? "movie" : "show",
+                destinationPath: nil, errorMessage: error.localizedDescription,
+                succeeded: false, updatedAt: Date()
+            ))
             notifyCleanupFailure(torrentName: t.name, reason: error.localizedDescription)
             return false
         }

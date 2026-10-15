@@ -8,28 +8,66 @@
 import Foundation
 import SwiftUI
 import Combine
+import Security
+
+private enum MetadataCredentialStore {
+    private static let service = "swiftTorrent.metadata-providers"
+
+    static func read(_ account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func write(_ value: String, account: String) {
+        let key: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        guard !value.isEmpty else {
+            SecItemDelete(key as CFDictionary)
+            return
+        }
+        let data = Data(value.utf8)
+        let status = SecItemUpdate(key as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var item = key
+            item[kSecValueData as String] = data
+            SecItemAdd(item as CFDictionary, nil)
+        }
+    }
+}
 
 enum MediaFileFilter {
-    static let allowedExtensions: Set<String> = [
+    nonisolated static let allowedExtensions: Set<String> = [
         "3gp", "3g2", "asf", "ass", "avi", "divx", "flac", "flv", "idx", "m2ts",
         "m4a", "m4b", "m4p", "m4r", "m4v", "mka", "mkv", "mov", "mp3", "mp4",
         "mpeg", "mpg", "nfo", "oga", "ogg", "ogm", "ogv", "opus", "smi", "srt", "ssa",
         "sub", "sup", "ts", "vob", "vtt", "wav", "webm", "wma", "wmv"
     ]
 
-    static func shouldAllow(path: String) -> Bool {
+    nonisolated static func shouldAllow(path: String) -> Bool {
         let ext = URL(fileURLWithPath: path).pathExtension.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !ext.isEmpty else { return false }
         return allowedExtensions.contains(ext)
     }
 }
 
-struct FileExclusionRule: Codable, Hashable, Identifiable {
+struct FileExclusionRule: Codable, Hashable, Identifiable, Sendable {
     let id: UUID
     var fileExtension: String
     var categoryIDs: Set<String>
 
-    var appliesToAllCategories: Bool { categoryIDs.isEmpty }
+    nonisolated var appliesToAllCategories: Bool { categoryIDs.isEmpty }
 }
 
 struct RecentDownloadItem: Codable, Hashable, Identifiable {
@@ -58,6 +96,29 @@ struct RecentDownloadItem: Codable, Hashable, Identifiable {
     }
 }
 
+struct CleanupHistoryEntry: Codable, Hashable, Identifiable {
+    let id: UUID
+    var itemName: String
+    var sourceRootPath: String
+    var relativePaths: [String]
+    var category: String?
+    var query: String
+    var year: Int?
+    var typeRaw: String?
+    var destinationPath: String?
+    var errorMessage: String?
+    var succeeded: Bool
+    var updatedAt: Date
+
+    var mediaType: MediaMetadata.MediaType? {
+        switch typeRaw?.lowercased() {
+        case "movie": return .movie
+        case "show", "tv", "series": return .show
+        default: return nil
+        }
+    }
+}
+
 struct CategoryDefinition: Codable, Hashable, Identifiable {
     let id: String
     var title: String
@@ -79,6 +140,8 @@ final class AppSettings: ObservableObject {
 
     private enum K {
         static let autoCleanupEnabled = "swiftTorrent.settings.autoCleanupEnabled"
+        static let periodicCleanupEnabled = "swiftTorrent.settings.periodicCleanupEnabled"
+        static let periodicCleanupIntervalMinutes = "swiftTorrent.settings.periodicCleanupIntervalMinutes"
         static let moviesBookmark = "swiftTorrent.settings.moviesBookmark"
         static let tvBookmark = "swiftTorrent.settings.tvBookmark"
         static let cleanedKeys = "swiftTorrent.settings.cleanedTorrentKeys"
@@ -87,6 +150,12 @@ final class AppSettings: ObservableObject {
         static let webUIPort = "swiftTorrent.settings.webUIPort"
         static let rpcUsername = "swiftTorrent.settings.rpcUsername"
         static let rpcPassword = "swiftTorrent.settings.rpcPassword"
+        static let traktEnabled = "swiftTorrent.settings.traktEnabled"
+        static let traktClientID = "swiftTorrent.settings.traktClientID"
+        static let tvdbEnabled = "swiftTorrent.settings.tvdbEnabled"
+        static let tvdbAPIKey = "swiftTorrent.settings.tvdbAPIKey"
+        static let tvdbSubscriberPIN = "swiftTorrent.settings.tvdbSubscriberPIN"
+        static let fanartAPIKey = "swiftTorrent.settings.fanartAPIKey"
         static let maxActiveDownloads = "swiftTorrent.settings.maxActiveDownloads"
         static let queueManagementMode = "swiftTorrent.settings.queueManagementMode"
         static let autoFilterNonMediaFiles = "swiftTorrent.settings.autoFilterNonMediaFiles"
@@ -94,6 +163,7 @@ final class AppSettings: ObservableObject {
         static let legacyCategories = "swiftTorrent.settings.categories"
         static let recentDownloads = "swiftTorrent.settings.recentDownloads"
         static let recentCompletionKeys = "swiftTorrent.settings.recentCompletionKeys"
+        static let cleanupHistory = "swiftTorrent.settings.cleanupHistory"
         static let lastDownloadPath = "swiftTorrent.settings.lastDownloadPath"
         static let lastMoviesPath = "swiftTorrent.settings.lastMoviesPath"
         static let lastTVPath = "swiftTorrent.settings.lastTVPath"
@@ -128,6 +198,14 @@ final class AppSettings: ObservableObject {
         didSet { UserDefaults.standard.set(autoCleanupEnabled, forKey: K.autoCleanupEnabled) }
     }
 
+    @Published var periodicCleanupEnabled: Bool {
+        didSet { UserDefaults.standard.set(periodicCleanupEnabled, forKey: K.periodicCleanupEnabled) }
+    }
+
+    @Published var periodicCleanupIntervalMinutes: Int {
+        didSet { UserDefaults.standard.set(periodicCleanupIntervalMinutes, forKey: K.periodicCleanupIntervalMinutes) }
+    }
+
     @Published var moviesBookmarkData: Data? {
         didSet {
             UserDefaults.standard.set(moviesBookmarkData, forKey: K.moviesBookmark)
@@ -152,6 +230,30 @@ final class AppSettings: ObservableObject {
 
     @Published var rpcPassword: String = "" {
         didSet { UserDefaults.standard.set(rpcPassword, forKey: K.rpcPassword) }
+    }
+
+    @Published var traktEnabled: Bool {
+        didSet { UserDefaults.standard.set(traktEnabled, forKey: K.traktEnabled) }
+    }
+
+    @Published var traktClientID: String {
+        didSet { MetadataCredentialStore.write(traktClientID, account: K.traktClientID) }
+    }
+
+    @Published var tvdbEnabled: Bool {
+        didSet { UserDefaults.standard.set(tvdbEnabled, forKey: K.tvdbEnabled) }
+    }
+
+    @Published var tvdbAPIKey: String {
+        didSet { MetadataCredentialStore.write(tvdbAPIKey, account: K.tvdbAPIKey) }
+    }
+
+    @Published var tvdbSubscriberPIN: String {
+        didSet { MetadataCredentialStore.write(tvdbSubscriberPIN, account: K.tvdbSubscriberPIN) }
+    }
+
+    @Published var fanartAPIKey: String {
+        didSet { MetadataCredentialStore.write(fanartAPIKey, account: K.fanartAPIKey) }
     }
 
     @Published var maxActiveDownloads: Int = 5 {
@@ -282,6 +384,14 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published private(set) var cleanupHistory: [CleanupHistoryEntry] {
+        didSet {
+            if let data = try? JSONEncoder().encode(cleanupHistory) {
+                UserDefaults.standard.set(data, forKey: K.cleanupHistory)
+            }
+        }
+    }
+
     @Published private(set) var recentCompletionKeys: Set<String> {
         didSet { UserDefaults.standard.set(Array(recentCompletionKeys), forKey: K.recentCompletionKeys) }
     }
@@ -308,6 +418,9 @@ final class AppSettings: ObservableObject {
 
     private init() {
         self.autoCleanupEnabled = UserDefaults.standard.bool(forKey: K.autoCleanupEnabled)
+        self.periodicCleanupEnabled = UserDefaults.standard.bool(forKey: K.periodicCleanupEnabled)
+        let storedCleanupInterval = UserDefaults.standard.integer(forKey: K.periodicCleanupIntervalMinutes)
+        self.periodicCleanupIntervalMinutes = [15, 60, 360, 1440].contains(storedCleanupInterval) ? storedCleanupInterval : 360
         self.moviesBookmarkData = UserDefaults.standard.data(forKey: K.moviesBookmark)
         self.tvBookmarkData = UserDefaults.standard.data(forKey: K.tvBookmark)
         self.downloadBookmarkData = UserDefaults.standard.data(forKey: K.downloadBookmark)
@@ -329,6 +442,12 @@ final class AppSettings: ObservableObject {
             loadedRecentDownloads = []
         }
         self.recentDownloads = loadedRecentDownloads
+        if let data = UserDefaults.standard.data(forKey: K.cleanupHistory),
+           let decoded = try? JSONDecoder().decode([CleanupHistoryEntry].self, from: data) {
+            self.cleanupHistory = decoded.sorted { $0.updatedAt > $1.updatedAt }
+        } else {
+            self.cleanupHistory = []
+        }
         let storedCompletionKeys = UserDefaults.standard.stringArray(forKey: K.recentCompletionKeys) ?? []
         if storedCompletionKeys.isEmpty {
             self.recentCompletionKeys = Set(loadedRecentDownloads.compactMap { item in
@@ -355,6 +474,17 @@ final class AppSettings: ObservableObject {
         self.webUIPort = (1...65535).contains(storedPort) ? storedPort : 8080
         self.rpcUsername = UserDefaults.standard.string(forKey: K.rpcUsername) ?? ""
         self.rpcPassword = UserDefaults.standard.string(forKey: K.rpcPassword) ?? ""
+        self.traktEnabled = UserDefaults.standard.object(forKey: K.traktEnabled) == nil
+            ? true : UserDefaults.standard.bool(forKey: K.traktEnabled)
+        self.traktClientID = MetadataCredentialStore.read(K.traktClientID)
+            ?? UserDefaults.standard.string(forKey: K.traktClientID) ?? ""
+        self.tvdbEnabled = UserDefaults.standard.bool(forKey: K.tvdbEnabled)
+        self.tvdbAPIKey = MetadataCredentialStore.read(K.tvdbAPIKey)
+            ?? UserDefaults.standard.string(forKey: K.tvdbAPIKey) ?? ""
+        self.tvdbSubscriberPIN = MetadataCredentialStore.read(K.tvdbSubscriberPIN)
+            ?? UserDefaults.standard.string(forKey: K.tvdbSubscriberPIN) ?? ""
+        self.fanartAPIKey = MetadataCredentialStore.read(K.fanartAPIKey)
+            ?? UserDefaults.standard.string(forKey: K.fanartAPIKey) ?? ""
 
         let storedMax = UserDefaults.standard.integer(forKey: K.maxActiveDownloads)
         self.maxActiveDownloads = storedMax > 0 ? storedMax : 5
@@ -414,6 +544,18 @@ final class AppSettings: ObservableObject {
         }
         self.categoryDefinitions = Self.loadCategoryDefinitions()
 
+        for (key, value) in [
+            (K.traktClientID, traktClientID),
+            (K.tvdbAPIKey, tvdbAPIKey),
+            (K.tvdbSubscriberPIN, tvdbSubscriberPIN),
+            (K.fanartAPIKey, fanartAPIKey)
+        ] {
+            if MetadataCredentialStore.read(key) == nil {
+                MetadataCredentialStore.write(value, account: key)
+            }
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+
         refreshResolvedURLs()
     }
 
@@ -453,6 +595,39 @@ final class AppSettings: ObservableObject {
         if recentDownloads.count > Self.maxRecentDownloads {
             recentDownloads = Array(recentDownloads.prefix(Self.maxRecentDownloads))
         }
+    }
+
+    func recordCleanupHistory(_ entry: CleanupHistoryEntry) {
+        var updated = cleanupHistory
+        if let index = updated.firstIndex(where: {
+            $0.sourceRootPath == entry.sourceRootPath && $0.relativePaths == entry.relativePaths
+        }) {
+            let existingID = updated[index].id
+            updated.remove(at: index)
+            var replacement = entry
+            replacement = CleanupHistoryEntry(
+                id: existingID,
+                itemName: entry.itemName,
+                sourceRootPath: entry.sourceRootPath,
+                relativePaths: entry.relativePaths,
+                category: entry.category,
+                query: entry.query,
+                year: entry.year,
+                typeRaw: entry.typeRaw,
+                destinationPath: entry.destinationPath,
+                errorMessage: entry.errorMessage,
+                succeeded: entry.succeeded,
+                updatedAt: entry.updatedAt
+            )
+            updated.insert(replacement, at: 0)
+        } else {
+            updated.insert(entry, at: 0)
+        }
+        cleanupHistory = Array(updated.prefix(200))
+    }
+
+    func clearCleanupHistory() {
+        cleanupHistory = []
     }
 
     func clearRecentCompletionMark(for key: String) {

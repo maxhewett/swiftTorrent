@@ -194,6 +194,7 @@ final class LocalWebServer {
             "torrent": torrentSummary(torrent: torrent, metadata: metadata),
             "metadata": metadataPayload(for: id, metadata: metadata) as Any,
             "metadataLookupState": lookupStateValue(engine.metadataLookupStateByID[id] ?? .idle),
+            "metadataLookupError": engine.metadataLookupErrorByID[id] as Any,
             "files": files,
             "override": [
                 "query": overrideHint.query as Any,
@@ -470,7 +471,8 @@ final class LocalWebServer {
             "category": category as Any,
             "categoryTitle": AppSettings.shared.categoryDefinition(for: category)?.title as Any,
             "metadata": metadataPayload(for: torrent.id, metadata: metadata) as Any,
-            "lookupState": lookupStateValue(engine?.metadataLookupStateByID[torrent.id] ?? .idle)
+            "lookupState": lookupStateValue(engine?.metadataLookupStateByID[torrent.id] ?? .idle),
+            "lookupError": engine?.metadataLookupErrorByID[torrent.id] as Any
         ]
     }
 
@@ -483,6 +485,7 @@ final class LocalWebServer {
             "year": metadata.year as Any,
             "overview": metadata.overview as Any,
             "displaySuffix": metadata.displaySuffix as Any,
+            "sources": Array(metadata.sources).sorted(),
             "posterURL": "/api/poster?id=\(torrentID)&v=\(webRevision)"
         ]
     }

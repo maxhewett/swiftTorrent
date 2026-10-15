@@ -15,6 +15,36 @@ final class TraktClient {
         self.clientID = clientID
     }
 
+    private func data(for request: URLRequest) async throws -> Data {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let response = response as? HTTPURLResponse else {
+            throw LookupError.invalidResponse
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            let body = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw LookupError.httpStatus(response.statusCode, body.map { String($0.prefix(400)) })
+        }
+        return data
+    }
+
+    enum LookupError: LocalizedError {
+        case invalidResponse
+        case httpStatus(Int, String?)
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidResponse:
+                return "Trakt returned an invalid HTTP response."
+            case .httpStatus(let status, let body):
+                if let body, !body.isEmpty {
+                    return "Trakt returned HTTP \(status): \(body)"
+                }
+                return "Trakt returned HTTP \(status)."
+            }
+        }
+    }
+
     private func makeRequest(_ path: String, queryItems: [URLQueryItem]) -> URLRequest {
         var comps = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         comps.queryItems = queryItems
@@ -104,7 +134,7 @@ final class TraktClient {
         items.append(URLQueryItem(name: "extended", value: "full"))
 
         let req = makeRequest("/search/movie", queryItems: items)
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let data = try await data(for: req)
         let results = try JSONDecoder().decode([SearchResult].self, from: data)
         return results.compactMap(\.movie)
     }
@@ -120,7 +150,7 @@ final class TraktClient {
         items.append(URLQueryItem(name: "extended", value: "full"))
 
         let req = makeRequest("/search/show", queryItems: items)
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let data = try await data(for: req)
         let results = try JSONDecoder().decode([SearchResult].self, from: data)
         return results.compactMap(\.show)
     }
@@ -128,14 +158,14 @@ final class TraktClient {
     func movie(id: String) async throws -> SearchResult.Movie {
         let req = makePathRequest("movies/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)",
                                   queryItems: [URLQueryItem(name: "extended", value: "full")])
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let data = try await data(for: req)
         return try JSONDecoder().decode(SearchResult.Movie.self, from: data)
     }
 
     func show(id: String) async throws -> SearchResult.Show {
         let req = makePathRequest("shows/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)",
                                   queryItems: [URLQueryItem(name: "extended", value: "full")])
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let data = try await data(for: req)
         return try JSONDecoder().decode(SearchResult.Show.self, from: data)
     }
 
@@ -158,14 +188,14 @@ final class TraktClient {
     private func ratings(path: String, id: String) async throws -> Ratings {
         let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         let req = makePathRequest("\(path)/\(encodedID)/ratings")
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let data = try await data(for: req)
         return try JSONDecoder().decode(Ratings.self, from: data)
     }
 
     private func people(path: String, id: String) async throws -> People {
         let encodedID = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         let req = makePathRequest("\(path)/\(encodedID)/people")
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let data = try await data(for: req)
         return try JSONDecoder().decode(People.self, from: data)
     }
 }

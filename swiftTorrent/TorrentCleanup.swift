@@ -23,6 +23,7 @@ enum TorrentCleanup {
         var id: String { source.path }
         let source: URL
         let destination: URL
+        let originalDestination: URL
     }
 
     struct CleanupPlan: Hashable {
@@ -75,8 +76,17 @@ enum TorrentCleanup {
         var movedAnything = false
         for plannedFile in plan.files {
             guard fm.fileExists(atPath: plannedFile.source.path) else { continue }
+            if plannedFile.source.standardizedFileURL.path == plannedFile.originalDestination.standardizedFileURL.path {
+                continue
+            }
             try fm.createDirectory(at: plannedFile.destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let finalDst = try resolveCollision(plannedFile.destination, collision: settings.collision)
+            if fm.fileExists(atPath: plannedFile.originalDestination.path),
+               filesAreIdentical(plannedFile.source, plannedFile.originalDestination) {
+                try fm.removeItem(at: plannedFile.source)
+                movedAnything = true
+                continue
+            }
+            let finalDst = try resolveCollision(plannedFile.originalDestination, collision: settings.collision)
             if settings.mode == .copy {
                 try copyItem(at: plannedFile.source, to: finalDst)
             } else {
@@ -139,7 +149,12 @@ enum TorrentCleanup {
             }
             guard !destRel.isEmpty else { return nil }
             let destination = dest.appendingPathComponent(destRel, isDirectory: false)
-            return PlannedFile(source: src, destination: previewCollision(destination, collision: settings.collision))
+            let samePath = src.standardizedFileURL.path == destination.standardizedFileURL.path
+            return PlannedFile(
+                source: src,
+                destination: samePath ? destination : previewCollision(destination, collision: settings.collision),
+                originalDestination: destination
+            )
         }
         return CleanupPlan(destinationFolder: dest, files: plannedFiles, strippedTopLevelFolder: singleTop)
     }
@@ -230,6 +245,25 @@ enum TorrentCleanup {
             let candidate = dir.appendingPathComponent(name)
             if !fm.fileExists(atPath: candidate.path) { return candidate }
             index += 1
+        }
+    }
+
+    private static func filesAreIdentical(_ lhs: URL, _ rhs: URL) -> Bool {
+        let fm = FileManager.default
+        guard let leftSize = (try? fm.attributesOfItem(atPath: lhs.path)[.size]) as? NSNumber,
+              let rightSize = (try? fm.attributesOfItem(atPath: rhs.path)[.size]) as? NSNumber,
+              leftSize.int64Value == rightSize.int64Value,
+              let left = try? FileHandle(forReadingFrom: lhs),
+              let right = try? FileHandle(forReadingFrom: rhs) else { return false }
+        defer {
+            try? left.close()
+            try? right.close()
+        }
+        while true {
+            guard let leftChunk = try? left.read(upToCount: 1_048_576),
+                  let rightChunk = try? right.read(upToCount: 1_048_576),
+                  leftChunk == rightChunk else { return false }
+            if leftChunk.isEmpty { return true }
         }
     }
 
