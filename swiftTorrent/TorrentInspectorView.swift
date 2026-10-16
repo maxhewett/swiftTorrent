@@ -274,11 +274,30 @@ struct TorrentInspectorView: View {
         guard let selected = engine.mediaByTorrentID[torrent.id] else { return nil }
         let duplicates = engine.mediaByTorrentID.filter { id, candidate in
             guard id != torrent.id, candidate.type == selected.type else { return false }
-            if let traktID = selected.traktID, candidate.traktID == traktID { return true }
-            if let tmdbID = selected.tmdbID, candidate.tmdbID == tmdbID { return true }
-            if let tvdbID = selected.tvdbID, candidate.tvdbID == tvdbID { return true }
-            if let imdbID = selected.imdbID, candidate.imdbID == imdbID { return true }
-            return candidate.title.localizedCaseInsensitiveCompare(selected.title) == .orderedSame && candidate.year == selected.year
+            let sameMedia = (selected.traktID != nil && candidate.traktID == selected.traktID)
+                || (selected.tmdbID != nil && candidate.tmdbID == selected.tmdbID)
+                || (selected.tvdbID != nil && candidate.tvdbID == selected.tvdbID)
+                || (selected.imdbID != nil && candidate.imdbID == selected.imdbID)
+                || (candidate.title.localizedCaseInsensitiveCompare(selected.title) == .orderedSame && candidate.year == selected.year)
+            guard sameMedia else { return false }
+
+            // A series can have many legitimate downloads. Only flag the same
+            // episode when both torrent names give us season and episode numbers.
+            if selected.type == .show,
+               let otherTorrent = engine.torrents.first(where: { $0.id == id }) {
+                let currentArrEpisodes = Set(engine.arrEpisodeRefs(for: torrent.id))
+                let otherArrEpisodes = Set(engine.arrEpisodeRefs(for: id))
+                if !currentArrEpisodes.isEmpty, !otherArrEpisodes.isEmpty {
+                    return !currentArrEpisodes.isDisjoint(with: otherArrEpisodes)
+                }
+                let currentEpisode = TorrentNameParser.parse(torrent.name)
+                let otherEpisode = TorrentNameParser.parse(otherTorrent.name)
+                if let currentSeason = currentEpisode.season, let currentNumber = currentEpisode.episode,
+                   let otherSeason = otherEpisode.season, let otherNumber = otherEpisode.episode {
+                    return currentSeason == otherSeason && currentNumber == otherNumber
+                }
+            }
+            return true
         }
         guard !duplicates.isEmpty else { return nil }
         return "Possible duplicate: this media item is already present."

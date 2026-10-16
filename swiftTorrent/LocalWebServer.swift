@@ -45,7 +45,13 @@ final class LocalWebServer {
             RunDiagnostics.shared.log("Transmission RPC available at http://127.0.0.1:\(p)/transmission/rpc")
         } catch {
             currentPort = nil
-            RunDiagnostics.shared.log("Failed to start web server: \(error.localizedDescription)", level: "ERROR")
+            // Swift's default NSError bridge drops Swifter.SocketError's
+            // associated errno text (for example, "Address already in use").
+            // Keep the reflected error so ARR callback failures are diagnosable.
+            RunDiagnostics.shared.log(
+                "Failed to start web server on port \(p): \(String(reflecting: error)); description=\(error.localizedDescription)",
+                level: "ERROR"
+            )
         }
     }
 
@@ -322,12 +328,16 @@ final class LocalWebServer {
             return .badRequest(.text("Missing downloadId"))
         }
 
-        let key = ArrMetadataStore.normalizedKey(rawDownloadID)
+        // ARR download IDs normally equal the torrent info hash, but accepting a
+        // magnet URI here also makes the hint key line up with TorrentStore.
+        let key = MagnetKeyExtractor.key(from: rawDownloadID) ?? ArrMetadataStore.normalizedKey(rawDownloadID)
         let source = arrSource(from: fields)
         let type = arrType(from: fields, source: source)
         let title = firstValue(in: fields, keys: [
             "radarr_movie_title",
             "sonarr_series_title",
+            "movie.title",
+            "series.title",
             "movieTitle",
             "seriesTitle",
             "movie_title",
@@ -348,6 +358,8 @@ final class LocalWebServer {
             arrID: firstIntValue(in: fields, keys: [
                 "radarr_movie_id",
                 "sonarr_series_id",
+                "movie.id",
+                "series.id",
                 "movieId",
                 "seriesId",
                 "movie_id",
@@ -360,6 +372,8 @@ final class LocalWebServer {
             title: title,
             year: firstIntValue(in: fields, keys: [
                 "year",
+                "movie.year",
+                "series.year",
                 "movieYear",
                 "seriesYear",
                 "radarr_movie_year",
@@ -368,18 +382,23 @@ final class LocalWebServer {
             imdbID: firstValue(in: fields, keys: [
                 "imdbId",
                 "imdb_id",
+                "movie.imdbId",
+                "series.imdbId",
                 "radarr_movie_imdbid",
                 "sonarr_series_imdbid"
             ]),
             tmdbID: firstIntValue(in: fields, keys: [
                 "tmdbId",
                 "tmdb_id",
+                "movie.tmdbId",
+                "series.tmdbId",
                 "radarr_movie_tmdbid",
                 "sonarr_series_tmdbid"
             ]),
             tvdbID: firstIntValue(in: fields, keys: [
                 "tvdbId",
                 "tvdb_id",
+                "series.tvdbId",
                 "sonarr_series_tvdbid"
             ]),
             traktID: firstIntValue(in: fields, keys: [
@@ -392,7 +411,8 @@ final class LocalWebServer {
                 "scope",
                 "requestScope",
                 "request_scope",
-                "tsuname_scope"
+                "tsuname_scope",
+                "eventType"
             ]),
             seasons: intListValue(in: fields, keys: [
                 "seasons",
@@ -401,22 +421,21 @@ final class LocalWebServer {
                 "season_number",
                 "tsuname_seasons"
             ]),
-            episodes: episodeRefsValue(in: fields, keys: [
-                "episodes",
-                "episode",
-                "episodeRefs",
-                "episode_refs",
-                "tsuname_episodes"
-            ]),
+            episodes: arrEpisodeRefs(from: fields),
             releaseTitle: firstValue(in: fields, keys: [
                 "releaseTitle",
                 "release_title",
+                "release.releaseTitle",
+                "release.title",
                 "tsuname_release_title"
             ]),
             updatedAt: Date()
         )
 
         ArrMetadataStore.upsert(hint)
+        RunDiagnostics.shared.log(
+            "[ARR] Grab hint received source=\(source.rawValue) title=\(title) key=\(key) type=\(type) IDs(imdb=\(hint.imdbID ?? "-"), tmdb=\(hint.tmdbID.map(String.init) ?? "-"), tvdb=\(hint.tvdbID.map(String.init) ?? "-"), trakt=\(hint.traktID.map(String.init) ?? "-"))"
+        )
         if let mediaType = hint.mediaType {
             TorrentStore.assignCategoryIfMissing(
                 key: key,
@@ -433,6 +452,13 @@ final class LocalWebServer {
                     engine.refreshMetadata(for: torrent)
                 }
             }
+            if matchingIDs.isEmpty {
+                RunDiagnostics.shared.log("[ARR] Grab hint saved for \(key); no current torrent has this info hash. Metadata will use it if a later torrent matches.", level: "WARN")
+            } else {
+                RunDiagnostics.shared.log("[ARR] Grab hint matched \(matchingIDs.count) current torrent(s) for \(key)")
+            }
+        } else {
+            RunDiagnostics.shared.log("[ARR] Grab hint saved for \(key), but the torrent engine is not attached yet.", level: "WARN")
         }
 
         return ok([
@@ -518,17 +544,7 @@ final class LocalWebServer {
         var fields = Dictionary(uniqueKeysWithValues: req.queryParams.map { ($0.0, $0.1) })
 
         if let json = parseJSONBody(req.body) {
-            for (key, value) in json {
-                if let string = value as? String {
-                    fields[key] = string
-                } else if let number = value as? NSNumber {
-                    fields[key] = number.stringValue
-                } else if JSONSerialization.isValidJSONObject(value),
-                          let data = try? JSONSerialization.data(withJSONObject: value),
-                          let string = String(data: data, encoding: .utf8) {
-                    fields[key] = string
-                }
-            }
+            flattenJSONFields(json, prefix: nil, into: &fields)
         }
 
         for (key, value) in parseFormBody(req.body) {
@@ -536,6 +552,26 @@ final class LocalWebServer {
         }
 
         return fields
+    }
+
+    private func flattenJSONFields(_ object: [String: Any], prefix: String?, into fields: inout [String: String]) {
+        for (key, value) in object {
+            let path = prefix.map { "\($0).\(key)" } ?? key
+            if let nested = value as? [String: Any] {
+                flattenJSONFields(nested, prefix: path, into: &fields)
+            } else if let string = value as? String {
+                fields[path] = string
+                if prefix == nil { fields[key] = string }
+            } else if let number = value as? NSNumber {
+                fields[path] = number.stringValue
+                if prefix == nil { fields[key] = number.stringValue }
+            } else if JSONSerialization.isValidJSONObject(value),
+                      let data = try? JSONSerialization.data(withJSONObject: value),
+                      let string = String(data: data, encoding: .utf8) {
+                fields[path] = string
+                if prefix == nil { fields[key] = string }
+            }
+        }
     }
 
     private func firstValue(in fields: [String: String], keys: [String]) -> String? {
@@ -604,6 +640,23 @@ final class LocalWebServer {
         return []
     }
 
+    private func sonarrEpisodeRefs(from fields: [String: String]) -> [ArrMetadataHint.EpisodeRef] {
+        guard let season = firstIntValue(in: fields, keys: ["seasonNumber", "season_number", "sonarr_release_seasonnumber"]),
+              let rawEpisodes = firstValue(in: fields, keys: ["episodeNumbers", "episode_numbers", "sonarr_release_episodenumbers"]) else {
+            return []
+        }
+        return Array(Set(rawEpisodes.split { ",;| \n\t".contains($0) }.compactMap { Int($0) }.map {
+            ArrMetadataHint.EpisodeRef(season: season, episode: $0)
+        })).sorted { $0.episode < $1.episode }
+    }
+
+    private func arrEpisodeRefs(from fields: [String: String]) -> [ArrMetadataHint.EpisodeRef] {
+        let refs = episodeRefsValue(in: fields, keys: [
+            "episodes", "episode", "episodeRefs", "episode_refs", "tsuname_episodes"
+        ])
+        return refs.isEmpty ? sonarrEpisodeRefs(from: fields) : refs
+    }
+
     private func episodeRefs(from raw: String) -> [ArrMetadataHint.EpisodeRef] {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
@@ -655,10 +708,11 @@ final class LocalWebServer {
     }
 
     private func arrSource(from fields: [String: String]) -> ArrMetadataHint.Source {
-        if fields.keys.contains(where: { $0.hasPrefix("radarr_") }) || firstValue(in: fields, keys: ["source"])?.lowercased() == "radarr" {
+        let keys = fields.keys.map { $0.lowercased() }
+        if keys.contains(where: { $0.hasPrefix("radarr_") || $0.hasPrefix("movie.") }) || firstValue(in: fields, keys: ["source"])?.lowercased() == "radarr" {
             return .radarr
         }
-        if fields.keys.contains(where: { $0.hasPrefix("sonarr_") }) || firstValue(in: fields, keys: ["source"])?.lowercased() == "sonarr" {
+        if keys.contains(where: { $0.hasPrefix("sonarr_") || $0.hasPrefix("series.") }) || firstValue(in: fields, keys: ["source"])?.lowercased() == "sonarr" {
             return .sonarr
         }
         if fields.keys.contains(where: { $0.hasPrefix("tsuname_") }) || firstValue(in: fields, keys: ["source"])?.lowercased() == "tsuname" {

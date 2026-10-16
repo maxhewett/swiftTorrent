@@ -10,19 +10,32 @@ import SwiftUI
 struct TorrentListRow: View {
     let t: TorrentRow
     @ObservedObject var engine: TorrentEngine
+    var isGroupedShowChild: Bool = false
+    var rowDensity: String = "comfortable"
 
     private var isBoosted: Bool { engine.isBoosted(torrentID: t.id) }
 
     var body: some View {
         HStack(spacing: 14) {
 
-            posterView
+            if !isGroupedShowChild { posterView }
 
             StatusIcon(state: t.state, isSeeding: t.isSeeding, isPaused: t.isPaused)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(displayName)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: contentSpacing) {
+                if let meta = engine.mediaByTorrentID[t.id] {
+                    if !isGroupedShowChild {
+                        Text(mediaTitle(meta)).lineLimit(1)
+                    }
+                    if meta.type == .show, let episodeLabel {
+                        Text(episodeLabel)
+                            .font(isGroupedShowChild ? .subheadline.weight(.medium).monospacedDigit() : .caption2.weight(.medium).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text(displayName)
+                        .lineLimit(1)
+                }
 
                 if shouldShowProgressBar {
                     ProgressView(value: t.progress)
@@ -53,7 +66,7 @@ struct TorrentListRow: View {
                 queueControls
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, contentVerticalPadding)
         .contentShape(Rectangle())
         .background {
             TorrentWindOverlay(t: t, isBoosted: isBoosted)
@@ -71,6 +84,22 @@ struct TorrentListRow: View {
         }
     }
 
+    private var contentSpacing: CGFloat {
+        switch rowDensity {
+        case "compact": return 4
+        case "dense": return 2
+        default: return 6
+        }
+    }
+
+    private var contentVerticalPadding: CGFloat {
+        switch rowDensity {
+        case "compact": return 4
+        case "dense": return 2
+        default: return 6
+        }
+    }
+
     // MARK: - Trakt Display
 
     private var displayName: String {
@@ -84,6 +113,40 @@ struct TorrentListRow: View {
             return t.name
         }
         return t.name
+    }
+
+    private func mediaTitle(_ metadata: MediaMetadata) -> String {
+        metadata.title + (metadata.year.map { " (\($0))" } ?? "")
+    }
+
+    private var episodeLabel: String? {
+        if let suffix = engine.mediaByTorrentID[t.id]?.displaySuffix, !suffix.isEmpty {
+            if suffix.caseInsensitiveCompare("Complete") != .orderedSame { return suffix }
+        }
+        let parsed = TorrentNameParser.parse(t.name)
+        if let season = parsed.season, let episode = parsed.episode {
+            return String(format: "Season %02d · Episode %02d", season, episode)
+        }
+        if let seasonRange = packSeasonRange(in: t.name) { return seasonRange }
+        if let season = parsed.season, parsed.isComplete {
+            return String(format: "Season %02d pack", season)
+        }
+        if let season = parsed.season { return String(format: "Season %02d", season) }
+        if parsed.isComplete { return "Complete / multi-season pack" }
+        return nil
+    }
+
+    private func packSeasonRange(in name: String) -> String? {
+        let patterns = [#"\bS(\d{1,2})\s*[-–]\s*S(\d{1,2})\b"#, #"\bseasons?\s*(\d{1,2})\s*[-–]\s*(\d{1,2})\b"#]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+                  let match = regex.firstMatch(in: name, range: NSRange(name.startIndex..<name.endIndex, in: name)),
+                  let firstRange = Range(match.range(at: 1), in: name),
+                  let lastRange = Range(match.range(at: 2), in: name),
+                  let first = Int(name[firstRange]), let last = Int(name[lastRange]) else { continue }
+            return String(format: "Seasons %02d–%02d pack", first, last)
+        }
+        return nil
     }
 
     private var posterURL: URL? {
@@ -114,12 +177,28 @@ struct TorrentListRow: View {
                 posterPlaceholder
             }
         }
-        .frame(width: 34, height: 52) // tweak if you want bigger
+        .frame(width: posterWidth, height: posterHeight)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(.separator, lineWidth: 0.5)
         )
+    }
+
+    private var posterWidth: CGFloat {
+        switch rowDensity {
+        case "compact": return 30
+        case "dense": return 26
+        default: return 34
+        }
+    }
+
+    private var posterHeight: CGFloat {
+        switch rowDensity {
+        case "compact": return 44
+        case "dense": return 38
+        default: return 52
+        }
     }
 
     private var posterPlaceholder: some View {

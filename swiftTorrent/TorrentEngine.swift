@@ -195,6 +195,7 @@ final class TorrentEngine: ObservableObject {
     @Published private(set) var transferSpeedSamplesByID: [String: [TransferSpeedSample]] = [:]
     @Published private(set) var cleanupActivityCount = 0
     @Published private(set) var cleanupActivityMessage: String?
+    @Published private(set) var isCleanupPaused = false
     @Published var userFacingError: String?
 
     private var lastProgressByID: [String: Double] = [:]
@@ -212,8 +213,13 @@ final class TorrentEngine: ObservableObject {
     private var timer: Timer?
     private var periodicCleanupLastRunAt = Date.distantPast
     private var isPeriodicCleanupRunning = false
+    private var periodicCleanupTask: Task<Void, Never>?
+    private var activeCleanupScanTask: Task<PeriodicCleanupScanResult, Never>?
+    private var traktSeasonNumbersByShowID: [Int: Set<Int>] = [:]
+    private let cleanupPauseGate = PeriodicCleanupPauseGate()
 
     var isCleanupRunning: Bool { cleanupActivityCount > 0 }
+    var isCleanupScanRunning: Bool { isPeriodicCleanupRunning }
 
     private func beginCleanupActivity(_ message: String) {
         cleanupActivityCount += 1
@@ -228,13 +234,38 @@ final class TorrentEngine: ObservableObject {
     func startManualCleanupScan() {
         guard !isPeriodicCleanupRunning else { return }
         isPeriodicCleanupRunning = true
+        isCleanupPaused = false
+        cleanupPauseGate.setPaused(false)
         periodicCleanupLastRunAt = Date()
         UserDefaults.standard.set(periodicCleanupLastRunAt, forKey: "swiftTorrent.periodicCleanupLastRunAt")
         beginCleanupActivity("Scanning configured folders…")
         let storedItems = TorrentStore.load()
-        Task { [weak self] in
+        periodicCleanupTask = Task { [weak self] in
             await self?.runPeriodicCleanup(storedItems: storedItems)
         }
+    }
+
+    func toggleCleanupPause() {
+        guard isPeriodicCleanupRunning else { return }
+        isCleanupPaused.toggle()
+        cleanupPauseGate.setPaused(isCleanupPaused)
+        cleanupActivityMessage = isCleanupPaused ? "Cleanup paused" : "Resuming cleanup…"
+    }
+
+    func stopCleanup() {
+        guard isPeriodicCleanupRunning else { return }
+        isCleanupPaused = false
+        cleanupPauseGate.setPaused(false)
+        activeCleanupScanTask?.cancel()
+        periodicCleanupTask?.cancel()
+        cleanupActivityMessage = "Stopping cleanup…"
+    }
+
+    private func waitForCleanupResume() async -> Bool {
+        while isCleanupPaused && !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        return !Task.isCancelled
     }
 
     // Debounced poll — coalesces rapid back-to-back poll requests into one
@@ -346,6 +377,10 @@ final class TorrentEngine: ObservableObject {
 
     func sourceLabel(for torrentID: String) -> String {
         arrHint(forLiveTorrentID: torrentID)?.source.rawValue.capitalized ?? "Manual"
+    }
+
+    func arrEpisodeRefs(for torrentID: String) -> [ArrMetadataHint.EpisodeRef] {
+        arrHint(forLiveTorrentID: torrentID)?.episodes ?? []
     }
 
     // MARK: - Files
@@ -467,8 +502,9 @@ final class TorrentEngine: ObservableObject {
                     query: query,
                     year: year,
                     preferredType: typeHint,
-                    displaySuffix: parsed.suffix,
-                    arrHint: arrHint
+                    displaySuffix: arrEpisodeSuffix(arrHint) ?? parsed.suffix,
+                    arrHint: override.query == nil && override.year == nil && override.type == nil ? arrHint : nil,
+                    seasonHint: parsed.season ?? arrHint?.episodes.first?.season ?? arrHint?.seasons.first
                 )
                 guard var metaUnwrapped = meta else {
                     await MainActor.run {
@@ -737,12 +773,12 @@ final class TorrentEngine: ObservableObject {
         return parsed.inferredType ?? .movie
     }
 
-    private func resolvedMetadata(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, displaySuffix: String?, arrHint: ArrMetadataHint? = nil) async throws -> MediaMetadata? {
+    private func resolvedMetadata(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, displaySuffix: String?, arrHint: ArrMetadataHint? = nil, seasonHint: Int? = nil) async throws -> MediaMetadata? {
         if let arrHint, let arrResolved = try await resolvedArrMetadata(arrHint, displaySuffix: displaySuffix) {
             return arrResolved
         }
 
-        let candidates = try await resolvedMetadataCandidates(query: query, year: year, preferredType: preferredType)
+        let candidates = try await resolvedMetadataCandidates(query: query, year: year, preferredType: preferredType, seasonHint: seasonHint)
         guard let best = candidates.first, best.score >= 45 else { return nil }
         return MediaMetadata(
             type: best.type,
@@ -763,7 +799,7 @@ final class TorrentEngine: ObservableObject {
     private func resolvedArrMetadata(_ hint: ArrMetadataHint, displaySuffix: String?) async throws -> MediaMetadata? {
         guard let type = hint.mediaType else { return nil }
 
-        let title = hint.title
+        var title = hint.title
         var year = hint.year
         let traktID: Int? = hint.traktID
         var tmdbID = hint.tmdbID
@@ -771,6 +807,21 @@ final class TorrentEngine: ObservableObject {
         var tvdbID = hint.tvdbID
         var overview: String?
         var posterURL: URL?
+
+        if type == .show, let tvdbID = hint.tvdbID, AppSettings.shared.tvdbEnabled {
+            let apiKey = AppSettings.shared.tvdbAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !apiKey.isEmpty,
+               let tvdbShow = try? await TVDBClient(apiKey: apiKey, subscriberPIN: AppSettings.shared.tvdbSubscriberPIN)
+                .search(query: title, year: year, types: [.series])
+                .first(where: { $0.tvdbID == tvdbID }) {
+                title = tvdbShow.title
+                year = year ?? tvdbShow.year
+                tmdbID = tmdbID ?? tvdbShow.tmdbID
+                imdbID = imdbID ?? tvdbShow.imdbID
+                overview = tvdbShow.overview
+                posterURL = tvdbShow.posterURL
+            }
+        }
 
         // Radarr, Sonarr, and Tsuname already resolved the concrete media item.
         // Do not run a title search here; it can override known metadata.
@@ -823,7 +874,7 @@ final class TorrentEngine: ObservableObject {
             }
         }
 
-        return MediaMetadata(
+        var metadata = MediaMetadata(
             type: type,
             title: title,
             year: year,
@@ -836,6 +887,28 @@ final class TorrentEngine: ObservableObject {
             localPosterPath: nil,
             displaySuffix: displaySuffix
         )
+        if metadata.posterURL == nil {
+            metadata.posterURL = try? await configuredFanartPoster(for: metadata)
+        }
+        return metadata
+    }
+
+    private func arrEpisodeSuffix(_ hint: ArrMetadataHint?) -> String? {
+        guard let hint else { return nil }
+        let episodes = Array(Set(hint.episodes)).sorted {
+            $0.season == $1.season ? $0.episode < $1.episode : $0.season < $1.season
+        }
+        guard !episodes.isEmpty else {
+            return hint.seasons.count == 1 ? String(format: "S%02d", hint.seasons[0]) : nil
+        }
+        if episodes.count == 1 {
+            return String(format: "S%02dE%02d", episodes[0].season, episodes[0].episode)
+        }
+        let labels = episodes.prefix(4).map { episode in
+            String(format: "S%02dE%02d", episode.season, episode.episode)
+        }
+        let remainder = episodes.count - labels.count
+        return labels.joined(separator: ", ") + (remainder > 0 ? " +\(remainder) more" : "")
     }
 
     private func configuredFanartPoster(for metadata: MediaMetadata) async throws -> URL? {
@@ -844,7 +917,7 @@ final class TorrentEngine: ObservableObject {
         return try await FanartClient(apiKey: key).posterURL(for: metadata)
     }
 
-    private func resolvedMetadataCandidates(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, identifierHint: ArrMetadataHint? = nil) async throws -> [MetadataCandidate] {
+    private func resolvedMetadataCandidates(query: String, year: Int?, preferredType: MediaMetadata.MediaType?, identifierHint: ArrMetadataHint? = nil, seasonHint: Int? = nil) async throws -> [MetadataCandidate] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         var candidates: [MetadataCandidate] = []
         var providerErrors: [String] = []
@@ -917,6 +990,35 @@ final class TorrentEngine: ObservableObject {
                 })
             } catch {
                 providerErrors.append("TheTVDB: \(error.localizedDescription)")
+            }
+        }
+
+        if let seasonHint, seasonHint > 0, settings.traktEnabled, !traktClientID.isEmpty {
+            let showCandidates = candidates.filter { $0.type == .show && $0.traktID != nil }
+                .sorted { $0.score > $1.score }
+                .prefix(3)
+            if !showCandidates.isEmpty {
+                let trakt = TraktClient(clientID: traktClientID)
+                var seasonMatches: Set<String> = []
+                var didValidateAnySeason = false
+                for candidate in showCandidates {
+                    guard let traktID = candidate.traktID else { continue }
+                    let seasons: Set<Int>
+                    if let cached = traktSeasonNumbersByShowID[traktID] {
+                        seasons = cached
+                    } else if let fetched = try? await trakt.seasonNumbers(showID: traktID) {
+                        seasons = fetched
+                        traktSeasonNumbersByShowID[traktID] = fetched
+                    } else {
+                        continue
+                    }
+                    didValidateAnySeason = true
+                    guard seasons.contains(seasonHint) else { continue }
+                    seasonMatches.insert(candidate.id)
+                }
+                if didValidateAnySeason {
+                    candidates = candidates.filter { $0.type != .show || seasonMatches.contains($0.id) }
+                }
             }
         }
 
@@ -1841,7 +1943,7 @@ final class TorrentEngine: ObservableObject {
         let cleanupSettings = TorrentCleanup.CleanupSettings(
             moviesRoot: destinationOverride ?? appSettings.moviesURL() ?? fallback,
             tvRoot: destinationOverride ?? appSettings.tvURL() ?? fallback,
-            mode: .move,
+            mode: t.progress >= 0.999 ? .copy : .move,
             collision: .rename
         )
 
@@ -1881,7 +1983,9 @@ final class TorrentEngine: ObservableObject {
         let cleanupSettings = TorrentCleanup.CleanupSettings(
             moviesRoot: destinationOverride ?? appSettings.moviesURL() ?? fallback,
             tvRoot: destinationOverride ?? appSettings.tvURL() ?? fallback,
-            mode: .move,
+            // Keep completed payloads in place so libtorrent can continue seeding
+            // and can verify them when the app restores the magnet after relaunch.
+            mode: t.progress >= 0.999 ? .copy : .move,
             collision: .rename
         )
         let parsed = TorrentNameParser.parse(t.name)
@@ -1983,7 +2087,9 @@ final class TorrentEngine: ObservableObject {
         periodicCleanupLastRunAt = Date()
         UserDefaults.standard.set(periodicCleanupLastRunAt, forKey: "swiftTorrent.periodicCleanupLastRunAt")
         beginCleanupActivity("Scanning configured folders…")
-        Task { [weak self] in
+        isCleanupPaused = false
+        cleanupPauseGate.setPaused(false)
+        periodicCleanupTask = Task { [weak self] in
             await self?.runPeriodicCleanup(storedItems: storedItems)
         }
     }
@@ -1991,6 +2097,10 @@ final class TorrentEngine: ObservableObject {
     private func runPeriodicCleanup(storedItems: [StoredTorrent]) async {
         defer {
             isPeriodicCleanupRunning = false
+            isCleanupPaused = false
+            cleanupPauseGate.setPaused(false)
+            activeCleanupScanTask = nil
+            periodicCleanupTask = nil
             endCleanupActivity()
         }
         let appSettings = AppSettings.shared
@@ -2030,14 +2140,14 @@ final class TorrentEngine: ObservableObject {
         addRoot(moviesRoot, category: "movie")
         addRoot(tvRoot, category: "tv")
 
-        var incompleteFiles: Set<String> = []
-        for torrent in torrents where torrent.progress < 0.999 {
+        var managedTorrentFiles: Set<String> = []
+        for torrent in torrents {
             if filesByTorrentID[torrent.id] == nil { refreshFiles(for: torrent.id) }
             guard let savePath = savePath(forLiveTorrentID: torrent.id) else { continue }
             let saveRoot = URL(fileURLWithPath: savePath, isDirectory: true).standardizedFileURL
             for file in (filesByTorrentID[torrent.id] ?? []).filter({ !$0.isSkipped }) {
                 let path = saveRoot.appendingPathComponent(file.path.replacingOccurrences(of: "\\", with: "/")).standardizedFileURL.path
-                incompleteFiles.insert(path)
+                managedTorrentFiles.insert(path)
             }
         }
 
@@ -2053,13 +2163,19 @@ final class TorrentEngine: ObservableObject {
             exclusionRules: appSettings.fileExclusionRules
         )
         for root in roots.values.sorted(by: { $0.url.path < $1.url.path }) {
+            guard await waitForCleanupResume() else { return }
             let hasAccess = root.url.startAccessingSecurityScopedResource()
             defer { if hasAccess { root.url.stopAccessingSecurityScopedResource() } }
             let category = root.category ?? inferredCleanupCategory(from: root.url.path)
             let scanRoot = root.url
-            let scanResult = await Task.detached(priority: .utility) {
-                PeriodicCleanupScanner.scan(in: scanRoot, category: category, excludedRoots: nestedRoots, filter: scanFilter)
-            }.value
+            let pauseGate = cleanupPauseGate
+            let scanTask = Task.detached(priority: .utility) {
+                PeriodicCleanupScanner.scan(in: scanRoot, category: category, excludedRoots: nestedRoots, filter: scanFilter, pauseGate: pauseGate)
+            }
+            activeCleanupScanTask = scanTask
+            let scanResult = await scanTask.value
+            activeCleanupScanTask = nil
+            guard await waitForCleanupResume() else { return }
             if let error = scanResult.errorMessage {
                 AppSettings.shared.recordCleanupHistory(CleanupHistoryEntry(
                     id: UUID(), itemName: root.url.lastPathComponent,
@@ -2090,8 +2206,9 @@ final class TorrentEngine: ObservableObject {
                 )
             }
             for payload in folderPayloads + consolidatedRootFiles {
+                guard await waitForCleanupResume() else { return }
                 let safePaths = payload.relativePaths.filter {
-                    !incompleteFiles.contains(payload.root.appendingPathComponent($0).standardizedFileURL.path)
+                    !managedTorrentFiles.contains(payload.root.appendingPathComponent($0).standardizedFileURL.path)
                 }
                 guard !safePaths.isEmpty else { continue }
                 cleanupActivityMessage = "Checking \(payload.name)…"
@@ -2366,7 +2483,8 @@ final class TorrentEngine: ObservableObject {
         let cleanupSettings = TorrentCleanup.CleanupSettings(
             moviesRoot: moviesRoot,
             tvRoot: tvRoot,
-            mode: .move,
+            // Completed torrents remain available to seed until the torrent is removed.
+            mode: .copy,
             collision: .rename
         )
 

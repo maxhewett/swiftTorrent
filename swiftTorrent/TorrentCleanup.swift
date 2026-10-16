@@ -82,8 +82,13 @@ enum TorrentCleanup {
             try fm.createDirectory(at: plannedFile.destination.deletingLastPathComponent(), withIntermediateDirectories: true)
             if fm.fileExists(atPath: plannedFile.originalDestination.path),
                filesAreIdentical(plannedFile.source, plannedFile.originalDestination) {
-                try fm.removeItem(at: plannedFile.source)
-                movedAnything = true
+                // A completed torrent may still be seeding from its download path.
+                // Identical content at the library destination is enough to skip the
+                // copy, but only move-mode cleanup is allowed to delete the source.
+                if settings.mode == .move {
+                    try fm.removeItem(at: plannedFile.source)
+                    movedAnything = true
+                }
                 continue
             }
             let finalDst = try resolveCollision(plannedFile.originalDestination, collision: settings.collision)

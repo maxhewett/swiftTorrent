@@ -4,6 +4,11 @@ struct CleanupActivityPopover: View {
     @ObservedObject var engine: TorrentEngine
     @ObservedObject private var settings = AppSettings.shared
     let onFixMatch: (CleanupHistoryEntry) -> Void
+    @State private var showsErrorsOnly = false
+
+    private var visibleHistory: [CleanupHistoryEntry] {
+        showsErrorsOnly ? settings.cleanupHistory.filter { !$0.succeeded || $0.errorMessage != nil } : settings.cleanupHistory
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -17,7 +22,17 @@ struct CleanupActivityPopover: View {
                         .lineLimit(2)
                 }
                 Spacer()
-                if engine.isCleanupRunning {
+                if engine.isCleanupScanRunning {
+                    if engine.isCleanupPaused {
+                        Button("Resume") { engine.toggleCleanupPause() }
+                            .buttonStyle(.bordered)
+                    } else {
+                        Button("Pause") { engine.toggleCleanupPause() }
+                            .buttonStyle(.bordered)
+                    }
+                    Button("Stop", role: .destructive) { engine.stopCleanup() }
+                        .buttonStyle(.bordered)
+                } else if engine.isCleanupRunning {
                     ProgressView().controlSize(.small)
                 }
                 Button {
@@ -26,7 +41,7 @@ struct CleanupActivityPopover: View {
                     Label("Scan Now", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(engine.isCleanupRunning)
+                .disabled(engine.isCleanupScanRunning || engine.isCleanupRunning)
             }
 
             Divider()
@@ -35,6 +50,14 @@ struct CleanupActivityPopover: View {
                 Text("Recent activity")
                     .font(.headline)
                 Spacer()
+                Toggle("Errors", isOn: $showsErrorsOnly)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .labelsHidden()
+                    .help(showsErrorsOnly ? "Showing errors only" : "Show errors only")
+                Text("Errors")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if !settings.cleanupHistory.isEmpty {
                     Button("Clear") { settings.clearCleanupHistory() }
                         .buttonStyle(.plain)
@@ -43,13 +66,18 @@ struct CleanupActivityPopover: View {
                 }
             }
 
-            if settings.cleanupHistory.isEmpty {
+            if visibleHistory.isEmpty {
+                if showsErrorsOnly, !settings.cleanupHistory.isEmpty {
+                    ContentUnavailableView("No cleanup errors", systemImage: "checkmark.circle", description: Text("All recorded cleanup items succeeded."))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
                 ContentUnavailableView("No cleanup history", systemImage: "broom", description: Text("Cleanup results and errors will appear here."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        ForEach(settings.cleanupHistory) { entry in
+                        ForEach(visibleHistory) { entry in
                             CleanupHistoryRow(entry: entry) {
                                 onFixMatch(entry)
                             }
@@ -178,7 +206,7 @@ struct CleanupMatchFixSheet: View {
                     .labelsHidden()
                     .frame(width: 105)
                     Button("Search") { search() }
-                        .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSearching || engine.isCleanupRunning)
+                        .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSearching)
                 }
                 .padding(.bottom, 12)
 
@@ -207,7 +235,7 @@ struct CleanupMatchFixSheet: View {
                     if engine.isCleanupRunning { ProgressView().controlSize(.small) }
                     Button("Organize Files") { organize() }
                         .buttonStyle(.borderedProminent)
-                        .disabled(engine.isCleanupRunning || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 .padding(.top, 14)
             }

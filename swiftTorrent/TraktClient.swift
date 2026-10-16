@@ -169,6 +169,16 @@ final class TraktClient {
         return try JSONDecoder().decode(SearchResult.Show.self, from: data)
     }
 
+    func seasonNumbers(showID: Int) async throws -> Set<Int> {
+        let req = makePathRequest("shows/\(showID)/seasons")
+        let data = try await data(for: req)
+        return Set(try JSONDecoder().decode([SeasonSummary].self, from: data).map(\.number))
+    }
+
+    private struct SeasonSummary: Decodable {
+        let number: Int
+    }
+
     func movieRatings(id: String) async throws -> Ratings {
         try await ratings(path: "movies", id: id)
     }

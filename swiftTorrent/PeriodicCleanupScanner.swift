@@ -1,5 +1,27 @@
 import Foundation
 
+final class PeriodicCleanupPauseGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paused = false
+
+    func setPaused(_ value: Bool) {
+        lock.lock()
+        paused = value
+        lock.unlock()
+    }
+
+    func waitUntilResumed() -> Bool {
+        while !Task.isCancelled {
+            lock.lock()
+            let shouldWait = paused
+            lock.unlock()
+            if !shouldWait { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return false
+    }
+}
+
 struct PeriodicCleanupPayload: Sendable {
     let root: URL
     let name: String
@@ -28,7 +50,7 @@ enum PeriodicCleanupScanner {
         }
     }
 
-    nonisolated static func scan(in root: URL, category: String?, excludedRoots: Set<String>, filter: Filter) -> PeriodicCleanupScanResult {
+    nonisolated static func scan(in root: URL, category: String?, excludedRoots: Set<String>, filter: Filter, pauseGate: PeriodicCleanupPauseGate) -> PeriodicCleanupScanResult {
         let children: [URL]
         do {
             children = try FileManager.default.contentsOfDirectory(
@@ -43,11 +65,12 @@ enum PeriodicCleanupScanner {
         var payloads: [PeriodicCleanupPayload] = []
         var rootFiles: [String] = []
         for child in children {
+            guard pauseGate.waitUntilResumed() else { break }
             guard let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]),
                   values.isSymbolicLink != true else { continue }
             if values.isDirectory == true {
                 if excludedRoots.contains(child.standardizedFileURL.path) { continue }
-                let files = mediaFiles(in: child, relativeTo: child, depth: 0, category: category, excludedRoots: excludedRoots, filter: filter)
+                let files = mediaFiles(in: child, relativeTo: child, depth: 0, category: category, excludedRoots: excludedRoots, filter: filter, pauseGate: pauseGate)
                 if !files.isEmpty {
                     payloads.append(PeriodicCleanupPayload(root: child, name: child.lastPathComponent, relativePaths: files.sorted(), category: category))
                 }
@@ -69,7 +92,8 @@ enum PeriodicCleanupScanner {
         depth: Int,
         category: String?,
         excludedRoots: Set<String>,
-        filter: Filter
+        filter: Filter,
+        pauseGate: PeriodicCleanupPauseGate
     ) -> [String] {
         guard depth <= 5,
               let children = try? FileManager.default.contentsOfDirectory(
@@ -79,11 +103,12 @@ enum PeriodicCleanupScanner {
               ) else { return [] }
         var result: [String] = []
         for child in children {
+            guard pauseGate.waitUntilResumed() else { break }
             guard let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]),
                   values.isSymbolicLink != true else { continue }
             if values.isDirectory == true {
                 if excludedRoots.contains(child.standardizedFileURL.path) { continue }
-                result.append(contentsOf: mediaFiles(in: child, relativeTo: base, depth: depth + 1, category: category, excludedRoots: excludedRoots, filter: filter))
+                result.append(contentsOf: mediaFiles(in: child, relativeTo: base, depth: depth + 1, category: category, excludedRoots: excludedRoots, filter: filter, pauseGate: pauseGate))
             } else if values.isRegularFile == true, filter.shouldInclude(child.path, category: category) {
                 let basePath = base.standardizedFileURL.path
                 let childPath = child.standardizedFileURL.path

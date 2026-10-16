@@ -458,6 +458,27 @@ private struct DownloadsSettingsTab: View {
 
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
+                            Text("Transfer row density")
+                            Text("Fit more downloads in the queue.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Picker("Transfer row density", selection: $settings.queueRowDensity) {
+                            Text("Comfortable").tag("comfortable")
+                            Text("Compact").tag("compact")
+                            Text("Dense").tag("dense")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 270)
+                    }
+
+                    Toggle("Animate show group expand and collapse", isOn: $settings.animateTVGroupExpansion)
+
+                    Divider()
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
                             Text("Max active downloads")
                             Text("Set a practical cap if you want slower drives or connections to stay predictable.")
                                 .font(.caption)

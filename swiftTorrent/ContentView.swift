@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var showingRecentRail = false
     @State private var showingSettings = false
     @State private var showingCleanupPopover = false
+    @State private var collapsedTVShowGroups: Set<String> = []
     @State private var cleanupEntryToFix: CleanupHistoryEntry?
     @State private var shouldRestoreRecentAfterSettings = false
     @State private var hostWindow: NSWindow?
@@ -272,10 +273,10 @@ struct ContentView: View {
     // MARK: - Row builder
 
     @ViewBuilder
-    private func torrentRow(_ t: TorrentRow) -> some View {
-        TorrentListRow(t: t, engine: engine)
+    private func torrentRow(_ t: TorrentRow, groupedShowChild: Bool = false) -> some View {
+        TorrentListRow(t: t, engine: engine, isGroupedShowChild: groupedShowChild, rowDensity: settings.queueRowDensity)
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, queueRowVerticalPadding)
             .background {
                 ZStack {
                     if engine.isBoosted(torrentID: t.id) {
@@ -538,7 +539,7 @@ struct ContentView: View {
                     }
 
                     if !grouped.tv.isEmpty {
-                        sidebarSection(title: tvCategory.title, symbol: tvCategory.symbol, torrents: grouped.tv)
+                        sidebarTVSection(title: tvCategory.title, symbol: tvCategory.symbol, torrents: grouped.tv)
                     }
 
                     if !grouped.movies.isEmpty {
@@ -562,6 +563,130 @@ struct ContentView: View {
             )
         )
         .background(.ultraThinMaterial)
+    }
+
+    private struct TVShowQueueGroup: Identifiable {
+        let id: String
+        let title: String
+        let year: Int?
+        let torrents: [TorrentRow]
+    }
+
+    private func sidebarTVSection(title: String, symbol: String, torrents: [TorrentRow]) -> some View {
+        let groups = tvShowGroups(from: torrents)
+        let groupedIDs = Set(groups.flatMap { $0.torrents.map(\.id) })
+        let singles = torrents.filter { !groupedIDs.contains($0.id) }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Label(title, systemImage: symbol).font(.headline.weight(.semibold)).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Text(categorySummaryText(for: torrents)).font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
+            }.padding(.horizontal, 8)
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(groups) { group in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Button {
+                            let toggle = {
+                                if collapsedTVShowGroups.contains(group.id) { collapsedTVShowGroups.remove(group.id) }
+                                else { collapsedTVShowGroups.insert(group.id) }
+                            }
+                            if settings.animateTVGroupExpansion {
+                                withAnimation(.snappy(duration: 0.2), toggle)
+                            } else {
+                                toggle()
+                            }
+                        } label: {
+                          HStack(spacing: 8) {
+                            if let artwork = posterURL(for: group.torrents[0]) {
+                                AsyncImage(url: artwork, transaction: Transaction(animation: nil)) { phase in
+                                    if let image = phase.image { image.resizable().scaledToFill() }
+                                    else { PosterFallbackView(symbol: "tv", cornerRadius: 5) }
+                                }
+                                .frame(width: 34, height: groupHeaderArtworkHeight).clipShape(RoundedRectangle(cornerRadius: 5))
+                            } else {
+                                PosterFallbackView(symbol: "tv", cornerRadius: 5).frame(width: 34, height: groupHeaderArtworkHeight)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(group.title + (group.year.map { " (\($0))" } ?? ""))
+                                    .font(.subheadline.weight(.semibold)).lineLimit(1)
+                                Text("\(group.torrents.filter { $0.progress >= 0.999 }.count) / \(group.torrents.count) downloaded")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: collapsedTVShowGroups.contains(group.id) ? "chevron.right" : "chevron.down")
+                                .font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                          }
+                          .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).padding(.horizontal, 12).padding(.top, groupHeaderTopPadding).padding(.bottom, 2)
+                        if collapsedTVShowGroups.contains(group.id) {
+                            ProgressView(value: groupProgress(group.torrents))
+                                .tint(.accentColor)
+                                .padding(.leading, 54).padding(.trailing, 12).padding(.bottom, 7)
+                        }
+                        if !collapsedTVShowGroups.contains(group.id) {
+                            ForEach(group.torrents) { torrent in torrentRow(torrent, groupedShowChild: true) }
+                        }
+                    }
+                    .padding(.bottom, 4)
+                }
+                ForEach(singles) { torrent in torrentRow(torrent) }
+            }
+            .animation(.spring(response: 0.52, dampingFraction: 0.76), value: engine.boostedTorrentKey)
+        }
+    }
+
+    private var queueRowVerticalPadding: CGFloat {
+        switch settings.queueRowDensity {
+        case "compact": return 6
+        case "dense": return 3
+        default: return 10
+        }
+    }
+
+    private var groupHeaderArtworkHeight: CGFloat {
+        switch settings.queueRowDensity {
+        case "compact": return 40
+        case "dense": return 34
+        default: return 48
+        }
+    }
+
+    private var groupHeaderTopPadding: CGFloat {
+        switch settings.queueRowDensity {
+        case "compact": return 6
+        case "dense": return 3
+        default: return 8
+        }
+    }
+
+    private func groupProgress(_ torrents: [TorrentRow]) -> Double {
+        guard !torrents.isEmpty else { return 0 }
+        return torrents.reduce(0) { $0 + min(max($1.progress, 0), 1) } / Double(torrents.count)
+    }
+
+    private func tvShowGroups(from torrents: [TorrentRow]) -> [TVShowQueueGroup] {
+        let matched = torrents.compactMap { torrent -> (TorrentRow, MediaMetadata, String)? in
+            guard let metadata = engine.mediaByTorrentID[torrent.id], metadata.type == .show else { return nil }
+            let key: String
+            if let id = metadata.tvdbID { key = "tvdb:\(id)" }
+            else if let id = metadata.traktID { key = "trakt:\(id)" }
+            else if let id = metadata.tmdbID { key = "tmdb:\(id)" }
+            else if let id = metadata.imdbID { key = "imdb:\(id.lowercased())" }
+            else { key = "title:\(metadata.title.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)):\(metadata.year ?? 0)" }
+            return (torrent, metadata, key)
+        }
+        let buckets = Dictionary(grouping: matched, by: { $0.2 })
+        return buckets.compactMap { key, values -> TVShowQueueGroup? in
+            guard values.count > 1, let first = values.first else { return nil }
+            return TVShowQueueGroup(id: key, title: first.1.title, year: first.1.year, torrents: sortTorrents(values.map(\.0)))
+        }.sorted { lhs, rhs in
+            let l = lhs.torrents.first.map(statusSortRank) ?? 5
+            let r = rhs.torrents.first.map(statusSortRank) ?? 5
+            if l != r { return l < r }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
     }
 
     private func sidebarSection(title: String, symbol: String, torrents: [TorrentRow]) -> some View {

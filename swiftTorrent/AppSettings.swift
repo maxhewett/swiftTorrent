@@ -180,6 +180,8 @@ final class AppSettings: ObservableObject {
         static let dockOverlayMetricMode = "swiftTorrent.settings.dockOverlayMetricMode"
         static let dockOverlayStyleMode = "swiftTorrent.settings.dockOverlayStyleMode"
         static let categoryHeaderSecondaryMode = "swiftTorrent.settings.categoryHeaderSecondaryMode"
+        static let queueRowDensity = "swiftTorrent.settings.queueRowDensity"
+        static let animateTVGroupExpansion = "swiftTorrent.settings.animateTVGroupExpansion"
         static let fileExclusionRules = "swiftTorrent.settings.fileExclusionRules"
         static let notificationsEnabled = "swiftTorrent.settings.notificationsEnabled"
         static let notifyCompletion = "swiftTorrent.settings.notifyCompletion"
@@ -314,6 +316,14 @@ final class AppSettings: ObservableObject {
 
     @Published var categoryHeaderSecondaryMode: String = "none" {
         didSet { UserDefaults.standard.set(categoryHeaderSecondaryMode, forKey: K.categoryHeaderSecondaryMode) }
+    }
+
+    @Published var queueRowDensity: String = "comfortable" {
+        didSet { UserDefaults.standard.set(queueRowDensity, forKey: K.queueRowDensity) }
+    }
+
+    @Published var animateTVGroupExpansion: Bool = true {
+        didSet { UserDefaults.standard.set(animateTVGroupExpansion, forKey: K.animateTVGroupExpansion) }
     }
 
     @Published var notificationsEnabled: Bool = false {
@@ -530,6 +540,9 @@ final class AppSettings: ObservableObject {
         self.dockOverlayMetricMode = UserDefaults.standard.string(forKey: K.dockOverlayMetricMode) ?? "both"
         self.dockOverlayStyleMode = UserDefaults.standard.string(forKey: K.dockOverlayStyleMode) ?? "auto"
         self.categoryHeaderSecondaryMode = UserDefaults.standard.string(forKey: K.categoryHeaderSecondaryMode) ?? "none"
+        self.queueRowDensity = UserDefaults.standard.string(forKey: K.queueRowDensity) ?? "comfortable"
+        self.animateTVGroupExpansion = UserDefaults.standard.object(forKey: K.animateTVGroupExpansion) == nil
+            ? true : UserDefaults.standard.bool(forKey: K.animateTVGroupExpansion)
         self.notificationsEnabled = UserDefaults.standard.bool(forKey: K.notificationsEnabled)
         self.notifyCompletion = Self.boolDefaultingToTrue(forKey: K.notifyCompletion)
         self.notifyNASDisconnected = Self.boolDefaultingToTrue(forKey: K.notifyNASDisconnected)
