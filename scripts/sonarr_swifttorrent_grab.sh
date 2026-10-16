@@ -17,7 +17,9 @@ post_grab() {
     --data-urlencode "title=${sonarr_series_title}" \
     --data-urlencode "year=${sonarr_series_year:-}" \
     --data-urlencode "imdbId=${sonarr_series_imdbid:-}" \
+    --data-urlencode "tmdbId=${sonarr_series_tmdbid:-}" \
     --data-urlencode "tvdbId=${sonarr_series_tvdbid:-}" \
+    --data-urlencode "tvmazeId=${sonarr_series_tvmazeid:-}" \
     --data-urlencode "seasonNumber=${sonarr_release_seasonnumber:-}" \
     --data-urlencode "episodeNumbers=${sonarr_release_episodenumbers:-}" \
     --data-urlencode "releaseTitle=${sonarr_release_title:-}" \

@@ -29,6 +29,7 @@ struct ArrMetadataHint: Codable, Hashable {
     let imdbID: String?
     let tmdbID: Int?
     let tvdbID: Int?
+    let tvmazeID: Int?
     let traktID: Int?
     let scope: String?
     let seasons: [Int]
@@ -46,6 +47,7 @@ struct ArrMetadataHint: Codable, Hashable {
         imdbID: String?,
         tmdbID: Int?,
         tvdbID: Int?,
+        tvmazeID: Int? = nil,
         traktID: Int?,
         scope: String? = nil,
         seasons: [Int] = [],
@@ -62,6 +64,7 @@ struct ArrMetadataHint: Codable, Hashable {
         self.imdbID = imdbID
         self.tmdbID = tmdbID
         self.tvdbID = tvdbID
+        self.tvmazeID = tvmazeID
         self.traktID = traktID
         self.scope = scope
         self.seasons = seasons
@@ -81,6 +84,7 @@ struct ArrMetadataHint: Codable, Hashable {
         imdbID = try container.decodeIfPresent(String.self, forKey: .imdbID)
         tmdbID = try container.decodeIfPresent(Int.self, forKey: .tmdbID)
         tvdbID = try container.decodeIfPresent(Int.self, forKey: .tvdbID)
+        tvmazeID = try container.decodeIfPresent(Int.self, forKey: .tvmazeID)
         traktID = try container.decodeIfPresent(Int.self, forKey: .traktID)
         scope = try container.decodeIfPresent(String.self, forKey: .scope)
         seasons = try container.decodeIfPresent([Int].self, forKey: .seasons) ?? []
@@ -112,6 +116,10 @@ enum ArrMetadataStore {
 
     static func find(key: String) -> ArrMetadataHint? {
         loadAll()[normalizedKey(key)]
+    }
+
+    static func all() -> [ArrMetadataHint] {
+        Array(loadAll().values)
     }
 
     static func remove(key: String) {

@@ -496,6 +496,12 @@ final class TorrentEngine: ObservableObject {
         let year = override.year ?? arrHint?.year ?? parsed.year
         let typeHint = override.type ?? arrHint?.mediaType ?? defaultTypeHint
 
+        if let arrHint {
+            RunDiagnostics.shared.log(
+                "[ARR] Applying (arrHint.source.rawValue) hint to torrent=\(torrent.name) torrentKey=\(stableKey(forLiveTorrentID: torrent.id)) hintKey=\(arrHint.key) IDs(imdb=\(arrHint.imdbID ?? "-"), tmdb=\(arrHint.tmdbID.map(String.init) ?? "-"), tvdb=\(arrHint.tvdbID.map(String.init) ?? "-"), tvmaze=\(arrHint.tvmazeID.map(String.init) ?? "-"))"
+            )
+        }
+
         Task {
             do {
                 let meta = try await resolvedMetadata(
@@ -517,6 +523,11 @@ final class TorrentEngine: ObservableObject {
                 await MainActor.run {
                     self.mediaByTorrentID[torrent.id] = metaUnwrapped
                     self.metadataLookupStateByID[torrent.id] = .idle
+                    if let arrHint {
+                        RunDiagnostics.shared.log(
+                            "[ARR] Metadata match selected source=\(arrHint.source.rawValue) torrent=\(torrent.name) matchedTitle=\(metaUnwrapped.title) type=\(metaUnwrapped.type == .movie ? "movie" : "show") IDs(imdb=\(metaUnwrapped.imdbID ?? "-"), tmdb=\(metaUnwrapped.tmdbID.map(String.init) ?? "-"), tvdb=\(metaUnwrapped.tvdbID.map(String.init) ?? "-"))"
+                        )
+                    }
                 }
 
                 do {

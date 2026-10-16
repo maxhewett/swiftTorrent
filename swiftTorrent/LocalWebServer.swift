@@ -101,6 +101,11 @@ final class LocalWebServer {
             return DispatchQueue.main.sync { self.handleArrGrab(req) }
         }
 
+        server["/api/arr/diagnostics"] = { [weak self] _ in
+            guard let self else { return .internalServerError }
+            return DispatchQueue.main.sync { self.handleArrDiagnostics() }
+        }
+
         server["/api/diagnostics/last-run"] = { _ in
             DispatchQueue.main.sync {
                 .ok(.json(RunDiagnostics.shared.diagnosticsSnapshot(logLines: 200)))
@@ -401,6 +406,12 @@ final class LocalWebServer {
                 "series.tvdbId",
                 "sonarr_series_tvdbid"
             ]),
+            tvmazeID: firstIntValue(in: fields, keys: [
+                "tvmazeId",
+                "tvmaze_id",
+                "series.tvmazeId",
+                "sonarr_series_tvmazeid"
+            ]),
             traktID: firstIntValue(in: fields, keys: [
                 "traktId",
                 "trakt_id",
@@ -434,7 +445,7 @@ final class LocalWebServer {
 
         ArrMetadataStore.upsert(hint)
         RunDiagnostics.shared.log(
-            "[ARR] Grab hint received source=\(source.rawValue) title=\(title) key=\(key) type=\(type) IDs(imdb=\(hint.imdbID ?? "-"), tmdb=\(hint.tmdbID.map(String.init) ?? "-"), tvdb=\(hint.tvdbID.map(String.init) ?? "-"), trakt=\(hint.traktID.map(String.init) ?? "-"))"
+            "[ARR] Grab hint received source=\(source.rawValue) title=\(title) key=\(key) type=\(type) IDs(imdb=\(hint.imdbID ?? "-"), tmdb=\(hint.tmdbID.map(String.init) ?? "-"), tvdb=\(hint.tvdbID.map(String.init) ?? "-"), tvmaze=\(hint.tvmazeID.map(String.init) ?? "-"), trakt=\(hint.traktID.map(String.init) ?? "-")) release=\(hint.releaseTitle ?? "-") episodes=\(hint.episodes.map { "S\($0.season)E\($0.episode)" }.joined(separator: ","))"
         )
         if let mediaType = hint.mediaType {
             TorrentStore.assignCategoryIfMissing(
@@ -471,6 +482,39 @@ final class LocalWebServer {
             "seasons": hint.seasons,
             "episodes": hint.episodes.map { ["season": $0.season, "episode": $0.episode] }
         ])
+    }
+
+    private func handleArrDiagnostics() -> HttpResponse {
+        let formatter = ISO8601DateFormatter()
+        let entries: [[String: Any]] = ArrMetadataStore.all()
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .prefix(30)
+            .map { hint in
+                let matchingTorrents = (engine?.torrents ?? []).filter {
+                    stableKey(for: $0) == ArrMetadataStore.normalizedKey(hint.key)
+                        || ArrMetadataStore.normalizedKey($0.id) == ArrMetadataStore.normalizedKey(hint.key)
+                }
+                return [
+                    "receivedAt": formatter.string(from: hint.updatedAt),
+                    "source": hint.source.rawValue,
+                    "title": hint.title,
+                    "type": hint.type,
+                    "year": hint.year.map { $0 as Any } ?? NSNull(),
+                    "downloadKey": hint.key,
+                    "ids": [
+                        "imdb": hint.imdbID.map { $0 as Any } ?? NSNull(),
+                        "tmdb": hint.tmdbID.map { $0 as Any } ?? NSNull(),
+                        "tvdb": hint.tvdbID.map { $0 as Any } ?? NSNull(),
+                        "tvmaze": hint.tvmazeID.map { $0 as Any } ?? NSNull(),
+                        "trakt": hint.traktID.map { $0 as Any } ?? NSNull()
+                    ],
+                    "releaseTitle": hint.releaseTitle.map { $0 as Any } ?? NSNull(),
+                    "episodes": hint.episodes.map { ["season": $0.season, "episode": $0.episode] },
+                    "matchedTorrentCount": matchingTorrents.count,
+                    "matchedTorrents": matchingTorrents.map { ["id": $0.id, "name": $0.name] }
+                ]
+            }
+        return ok(["count": entries.count, "hints": entries])
     }
 
     private func torrentSummary(torrent: TorrentRow, metadata: MediaMetadata?) -> [String: Any] {
