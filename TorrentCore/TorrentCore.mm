@@ -14,11 +14,19 @@
 #include <libtorrent/add_torrent_params.hpp>
 #include <libtorrent/torrent_status.hpp>
 #include <libtorrent/download_priority.hpp>
+#include <libtorrent/alert_types.hpp>
+#include <libtorrent/read_resume_data.hpp>
+#include <libtorrent/write_resume_data.hpp>
 
 #include <vector>
 #include <string>
 #include <cstring>
 #include <mutex>
+#include <fstream>
+#include <iterator>
+#include <filesystem>
+#include <chrono>
+#include <cstdio>
 
 namespace lt = libtorrent;
 
@@ -32,7 +40,69 @@ struct SessionWrap {
     // Snapshot strings (stable pointers until next refresh)
     std::vector<std::string> names;
     std::vector<std::string> ids;
+    std::string resume_data_dir;
 };
+
+static std::string to_hex_hash(const lt::sha1_hash& hash) {
+    auto const* b = hash.data();
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    out.resize(40);
+    for (int i = 0; i < 20; ++i) {
+        unsigned char c = static_cast<unsigned char>(b[i]);
+        out[i * 2] = hex[(c >> 4) & 0xF];
+        out[i * 2 + 1] = hex[c & 0xF];
+    }
+    return out;
+}
+
+static std::string resume_file_path(const SessionWrap* w, const lt::sha1_hash& hash) {
+    if (!w || w->resume_data_dir.empty()) return {};
+    return (std::filesystem::path(w->resume_data_dir) / (to_hex_hash(hash) + ".fastresume")).string();
+}
+
+static bool same_info_hashes(const lt::info_hash_t& lhs, const lt::info_hash_t& rhs) {
+    return lhs.v1 == rhs.v1 && lhs.v2 == rhs.v2;
+}
+
+static void write_resume_data(SessionWrap* w, const lt::save_resume_data_alert* alert) {
+    if (!w || !alert) return;
+    const std::string path = resume_file_path(w, alert->params.info_hashes.v1);
+    if (path.empty()) return;
+
+    try {
+        std::filesystem::create_directories(w->resume_data_dir);
+        const std::string temporaryPath = path + ".tmp";
+        const std::vector<char> bytes = lt::write_resume_data_buf(alert->params);
+        {
+            std::ofstream output(temporaryPath, std::ios::binary | std::ios::trunc);
+            if (!output) return;
+            output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            if (!output) return;
+        }
+        if (std::rename(temporaryPath.c_str(), path.c_str()) != 0) {
+            std::remove(temporaryPath.c_str());
+        }
+    } catch (...) {
+        // A failed cache write is safe: the torrent will use the normal verification path.
+    }
+}
+
+static int process_resume_alerts(SessionWrap* w) {
+    if (!w) return 0;
+    std::vector<lt::alert*> alerts;
+    w->sess.pop_alerts(&alerts);
+    int completed = 0;
+    for (lt::alert* alert : alerts) {
+        if (auto const* saved = lt::alert_cast<lt::save_resume_data_alert>(alert)) {
+            write_resume_data(w, saved);
+            ++completed;
+        } else if (lt::alert_cast<lt::save_resume_data_failed_alert>(alert)) {
+            ++completed;
+        }
+    }
+    return completed;
+}
 
 static std::string to_hex_id(const lt::torrent_handle& h) {
     // For v1 torrents: info-hash v1 is sha1 (20 bytes) => 40 hex
@@ -74,6 +144,7 @@ STSessionRef st_session_create(uint16_t listen_port_start, uint16_t listen_port_
     p.set_bool(lt::settings_pack::enable_lsd, true);
     p.set_bool(lt::settings_pack::enable_upnp, true);
     p.set_bool(lt::settings_pack::enable_natpmp, true);
+    p.set_int(lt::settings_pack::alert_mask, static_cast<int>(lt::alert_category::storage | lt::alert_category::error));
 
     // Libtorrent 2.x uses listen_interfaces
     // Example: "0.0.0.0:6881,[::]:6881"
@@ -82,6 +153,60 @@ STSessionRef st_session_create(uint16_t listen_port_start, uint16_t listen_port_
 
     w->sess.apply_settings(p);
     return (STSessionRef)w;
+}
+
+void st_set_resume_data_directory(STSessionRef session, const char* directory) {
+    if (!session || !directory) return;
+    auto* w = static_cast<SessionWrap*>(session);
+    std::lock_guard<std::mutex> lock(w->mtx);
+    w->resume_data_dir = directory;
+    try {
+        std::filesystem::create_directories(w->resume_data_dir);
+    } catch (...) {
+        w->resume_data_dir.clear();
+    }
+}
+
+void st_request_resume_data(STSessionRef session) {
+    if (!session) return;
+    auto* w = static_cast<SessionWrap*>(session);
+    std::lock_guard<std::mutex> lock(w->mtx);
+    for (const auto& handle : w->sess.get_torrents()) {
+        if (!handle.is_valid()) continue;
+        try {
+            handle.save_resume_data(lt::torrent_handle::only_if_modified);
+        } catch (...) {
+            // Magnets without metadata cannot produce resume data yet.
+        }
+    }
+}
+
+void st_process_resume_data_alerts(STSessionRef session) {
+    if (!session) return;
+    auto* w = static_cast<SessionWrap*>(session);
+    std::lock_guard<std::mutex> lock(w->mtx);
+    process_resume_alerts(w);
+}
+
+void st_save_resume_data_and_wait(STSessionRef session) {
+    if (!session) return;
+    auto* w = static_cast<SessionWrap*>(session);
+    std::lock_guard<std::mutex> lock(w->mtx);
+    int pending = 0;
+    for (const auto& handle : w->sess.get_torrents()) {
+        if (!handle.is_valid()) continue;
+        try {
+            handle.save_resume_data();
+            ++pending;
+        } catch (...) {
+            // Continue saving other torrents when one has no metadata or is unavailable.
+        }
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    while (pending > 0 && std::chrono::steady_clock::now() < deadline) {
+        w->sess.wait_for_alert(std::chrono::milliseconds(250));
+        pending -= process_resume_alerts(w);
+    }
 }
 
 void st_session_destroy(STSessionRef session) {
@@ -103,6 +228,18 @@ bool st_add_magnet(
 
     try {
         lt::add_torrent_params atp = lt::parse_magnet_uri(magnet_uri);
+        const std::string resumePath = resume_file_path(w, atp.info_hashes.v1);
+        if (!resumePath.empty()) {
+            std::ifstream input(resumePath, std::ios::binary);
+            if (input) {
+                std::vector<char> resumeBytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+                lt::error_code resumeError;
+                lt::add_torrent_params resumed = lt::read_resume_data(resumeBytes, resumeError);
+                if (!resumeError && same_info_hashes(resumed.info_hashes, atp.info_hashes)) {
+                    atp = std::move(resumed);
+                }
+            }
+        }
         atp.save_path = save_path;
 
         // Don't let session auto-management override pause/resume decisions

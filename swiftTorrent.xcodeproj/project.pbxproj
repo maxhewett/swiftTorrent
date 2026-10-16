@@ -16391,6 +16391,7 @@
 		50B5C2AF2EF147A4007F233D /* WebUI in Resources */ = {isa = PBXBuildFile; fileRef = 50B5C2AE2EF147A3007F233D /* WebUI */; };
 		50F35E032EEE3624007EF828 /* TorrentCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 50F35DFB2EEE3624007EF828 /* TorrentCore.framework */; };
 		50F35E042EEE3624007EF828 /* TorrentCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 50F35DFB2EEE3624007EF828 /* TorrentCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		70A100000000000000000001 /* ArrScripts in Resources */ = {isa = PBXBuildFile; fileRef = 70A100000000000000000002 /* ArrScripts */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32817,6 +32818,7 @@
 		508B99282EEE30B7000B877D /* swiftTorrent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = swiftTorrent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		50B5C2AE2EF147A3007F233D /* WebUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = WebUI; path = swiftTorrent/WebUI; sourceTree = "<group>"; };
 		50F35DFB2EEE3624007EF828 /* TorrentCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = TorrentCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		70A100000000000000000002 /* ArrScripts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ArrScripts; path = swiftTorrent/ArrScripts; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -59787,6 +59789,7 @@
 				508B992A2EEE30B7000B877D /* swiftTorrent */,
 				50F35DFC2EEE3624007EF828 /* TorrentCore */,
 				508B99292EEE30B7000B877D /* Products */,
+				C326B76A3082054F00B0B6FA /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -59797,6 +59800,14 @@
 				50F35DFB2EEE3624007EF828 /* TorrentCore.framework */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		C326B76A3082054F00B0B6FA /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				70A100000000000000000002 /* ArrScripts */,
+			);
+			name = "Recovered References";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -76274,6 +76285,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				50B5C2AF2EF147A4007F233D /* WebUI in Resources */,
+				70A100000000000000000001 /* ArrScripts in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -76517,7 +76529,7 @@
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 032;
+				CURRENT_PROJECT_VERSION = 035;
 				DEVELOPMENT_TEAM = FHXMYC956U;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
@@ -76543,7 +76555,7 @@
 					"$(PROJECT_DIR)/Frameworks/Headers",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.32;
+				MARKETING_VERSION = 0.35;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.swiftTorrent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -76575,7 +76587,7 @@
 				AUTOMATION_APPLE_EVENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 032;
+				CURRENT_PROJECT_VERSION = 035;
 				DEVELOPMENT_TEAM = FHXMYC956U;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -76601,7 +76613,7 @@
 					"$(PROJECT_DIR)/Frameworks/Headers",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.32;
+				MARKETING_VERSION = 0.35;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.swiftTorrent;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -76629,7 +76641,7 @@
 				ARCHS = arm64;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 014;
+				CURRENT_PROJECT_VERSION = 032;
 				DEFINES_MODULE = YES;
 				DEVELOPMENT_TEAM = FHXMYC956U;
 				DYLIB_COMPATIBILITY_VERSION = 1;
@@ -76654,7 +76666,7 @@
 					"$(PROJECT_DIR)/Frameworks/Headers",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.32;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.TorrentCore;
@@ -76673,7 +76685,7 @@
 				ARCHS = arm64;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 014;
+				CURRENT_PROJECT_VERSION = 032;
 				DEFINES_MODULE = YES;
 				DEVELOPMENT_TEAM = FHXMYC956U;
 				DYLIB_COMPATIBILITY_VERSION = 1;
@@ -76698,7 +76710,7 @@
 					"$(PROJECT_DIR)/Frameworks/Headers",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.32;
 				MODULE_VERIFIER_SUPPORTED_LANGUAGES = "objective-c objective-c++";
 				MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS = "gnu17 gnu++20";
 				PRODUCT_BUNDLE_IDENTIFIER = com.maxhewett.TorrentCore;

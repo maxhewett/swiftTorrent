@@ -608,9 +608,9 @@ struct ContentView: View {
                                 PosterFallbackView(symbol: "tv", cornerRadius: 5).frame(width: 34, height: groupHeaderArtworkHeight)
                             }
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(group.title + (group.year.map { " (\($0))" } ?? ""))
+                                Text(groupDisplayTitle(group))
                                     .font(.subheadline.weight(.semibold)).lineLimit(1)
-                                Text("\(group.torrents.filter { $0.progress >= 0.999 }.count) / \(group.torrents.count) downloaded")
+                                Text(groupSummary(group.torrents))
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -663,7 +663,30 @@ struct ContentView: View {
 
     private func groupProgress(_ torrents: [TorrentRow]) -> Double {
         guard !torrents.isEmpty else { return 0 }
-        return torrents.reduce(0) { $0 + min(max($1.progress, 0), 1) } / Double(torrents.count)
+        let total = torrents.reduce(Int64(0)) { $0 + max($1.totalWanted, 0) }
+        guard total > 0 else {
+            return torrents.reduce(0) { $0 + min(max($1.progress, 0), 1) } / Double(torrents.count)
+        }
+        let completed = torrents.reduce(Int64(0)) { $0 + min(max($1.totalWantedDone, 0), max($1.totalWanted, 0)) }
+        return Double(completed) / Double(total)
+    }
+
+    private func groupSummary(_ torrents: [TorrentRow]) -> String {
+        let complete = torrents.filter { $0.progress >= 0.999 }.count
+        let downloading = torrents.filter { !$0.isPaused && !$0.isSeeding && $0.progress < 0.999 }.count
+        let seasonNumbers = Set(torrents.flatMap { engine.arrEpisodeRefs(for: $0.id).map(\.season) })
+        let seasons = seasonNumbers.sorted().map { String(format: "S%02d", $0) }.joined(separator: ", ")
+        let progress = Int((groupProgress(torrents) * 100).rounded())
+        let sourceNames = Set(torrents.map { engine.sourceLabel(for: $0.id) }.filter { $0 == "Sonarr" || $0 == "Radarr" })
+        let source = sourceNames.sorted().joined(separator: "+")
+        let prefix = [seasons.isEmpty ? nil : seasons, source.isEmpty ? nil : source].compactMap { $0 }.joined(separator: " · ")
+        let counts = "\(complete)/\(torrents.count) complete · \(downloading) downloading · \(progress)%"
+        return prefix.isEmpty ? counts : "\(prefix) · \(counts)"
+    }
+
+    private func groupDisplayTitle(_ group: TVShowQueueGroup) -> String {
+        let fromArr = group.torrents.contains { engine.sourceLabel(for: $0.id) == "Sonarr" || engine.sourceLabel(for: $0.id) == "Radarr" }
+        return MediaMetadata.formattedTitle(group.title, year: group.year, normalizingFormEncodedSpaces: fromArr)
     }
 
     private func tvShowGroups(from torrents: [TorrentRow]) -> [TVShowQueueGroup] {

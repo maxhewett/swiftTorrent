@@ -37,6 +37,23 @@ struct TorrentListRow: View {
                         .lineLimit(1)
                 }
 
+                if let queueOrigin = queueOriginLabel {
+                    HStack(spacing: 5) {
+                        Image(queueOrigin == "Radarr" ? "RadarrBadge" : "SonarrBadge")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 12, height: 12)
+                            .accessibilityHidden(true)
+                        Text(queueOrigin)
+                    }
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.quaternary.opacity(0.6), in: Capsule())
+                    .accessibilityLabel("Added by \(queueOrigin)")
+                }
+
                 if shouldShowProgressBar {
                     ProgressView(value: t.progress)
                         .animation(nil, value: t.progress)
@@ -104,8 +121,7 @@ struct TorrentListRow: View {
 
     private var displayName: String {
         if let meta = engine.mediaByTorrentID[t.id] {
-            var base = meta.title
-            if let y = meta.year { base += " (\(y))" }
+            var base = meta.formattedTitle(normalizingFormEncodedSpaces: queueOriginLabel != nil)
             if let suf = meta.displaySuffix, !suf.isEmpty { base += " • \(suf)" }
             return base
         }
@@ -116,7 +132,7 @@ struct TorrentListRow: View {
     }
 
     private func mediaTitle(_ metadata: MediaMetadata) -> String {
-        metadata.title + (metadata.year.map { " (\($0))" } ?? "")
+        metadata.formattedTitle(normalizingFormEncodedSpaces: queueOriginLabel != nil)
     }
 
     private var episodeLabel: String? {
@@ -134,6 +150,11 @@ struct TorrentListRow: View {
         if let season = parsed.season { return String(format: "Season %02d", season) }
         if parsed.isComplete { return "Complete / multi-season pack" }
         return nil
+    }
+
+    private var queueOriginLabel: String? {
+        let source = engine.sourceLabel(for: t.id)
+        return source == "Radarr" || source == "Sonarr" ? source : nil
     }
 
     private func packSeasonRange(in name: String) -> String? {

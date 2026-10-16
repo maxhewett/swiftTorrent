@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+if [ "${radarr_eventtype:-}" = "Test" ]; then
+  printf '%s\n' "swiftTorrent Radarr custom script is installed; On Grab will send the torrent hash and movie IDs."
+  exit 0
+fi
+
 : "${radarr_download_id:?radarr_download_id is required}"
 : "${radarr_movie_title:?radarr_movie_title is required}"
 

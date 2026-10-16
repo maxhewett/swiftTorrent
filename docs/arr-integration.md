@@ -1,16 +1,22 @@
-# Radarr and Sonarr metadata matching
+# Radarr and Sonarr integration
 
-swiftTorrent receives authoritative media IDs from Radarr and Sonarr through an **On Grab** callback. Radarr supplies the movie's TMDb and IMDb IDs; Sonarr supplies TVDB, TMDb, IMDb, and episode/season details. Both also supply `download_id`, the torrent hash used to connect the callback to swiftTorrent's torrent row. These are two separate matches: the hash joins the callback to the transfer, and the media IDs identify the movie or series. The Transmission RPC `torrent-add` request does not include the media IDs. Without the grab callback, swiftTorrent can only infer a match from the release name. The callback endpoint accepts both the included scripts' form fields and nested Radarr/Sonarr webhook JSON.
+swiftTorrent's Transmission-compatible download client connection receives torrent details, but not the media IDs Radarr and Sonarr know. The included custom scripts send those IDs to swiftTorrent when a release is grabbed. This is what allows swiftTorrent to match a torrent to the intended movie, series, season, and episodes reliably.
 
-## Configure the grab callback
+## Install the custom scripts
 
-1. Make the matching script available on the machine running Radarr or Sonarr. The scripts are `scripts/radarr_swifttorrent_grab.sh` and `scripts/sonarr_swifttorrent_grab.sh` in this repository. They are executable and use `/bin/sh` for portability.
-2. For local installs, the scripts try both `http://127.0.0.1:8080` and `http://127.0.0.1:8180`, since swiftTorrent's WebUI port is configurable and 8180 is also a common Transmission-compatible client port. If Radarr/Sonarr runs in Docker or on another machine, set `SWIFTTORRENT_WEBUI_BASE_URL` to an address reachable from the container/machine, such as `http://host.docker.internal:8180` for Docker Desktop or `http://<swiftTorrent-host>:<web-ui-port>` for a remote host. The script prints each callback URL and supplied IDs; curl errors are returned to the Arr custom-script log.
-3. In Radarr or Sonarr, add a **Custom Script** connection with the **On Grab** trigger and select the corresponding script. Keep the script’s environment variables enabled; it submits the service’s download ID, title, year, and IMDb/TMDb/TVDB IDs to `/api/arr/grab`.
-4. Grab a test item and inspect swiftTorrent’s Diagnostics logs. A successful callback logs `[ARR] Grab hint received` followed by whether its download hash matched a current torrent. If the hint was received before the torrent was added, it remains stored and will be used when that hash appears. If there is no `[ARR]` log at all, the custom script did not reach swiftTorrent; check its output in the Arr logs for the endpoint and HTTP/network error.
+1. Locate `radarr_swifttorrent_grab.sh` and `sonarr_swifttorrent_grab.sh` from the swiftTorrent distribution. In a source checkout they are in `scripts/`; packaged builds include them in the app's `Contents/Resources/ArrScripts/` folder.
+2. Copy the relevant script to a location executable by the Radarr or Sonarr service account. If those services run in Docker or on another machine, copy the script into the container/host and make sure its path is visible there. The script must be executable (`chmod +x <script-path>`).
+3. In Radarr, open **Settings → Connect → + → Custom Script**. Set the script path and enable **On Grab**. Repeat in Sonarr with its corresponding script.
+4. Use **Test** in the custom script settings. The test event does not include a torrent hash or media IDs; the included scripts recognize it and report that they are installed.
 
-For a structured view of recent callbacks, open `http://127.0.0.1:<web-ui-port>/api/arr/diagnostics`. It lists each received ID, the `download_id` key, and any current torrent row matched by that key. A callback with `matchedTorrentCount: 0` means the media identity arrived but could not yet be joined to a transfer; a matched row should then produce `[ARR] Applying ... hint` and `[ARR] Metadata match selected` log entries.
+The scripts try `http://127.0.0.1:8080` and `http://127.0.0.1:8180` by default. If swiftTorrent uses another Web UI port, or Arr runs in a container/on another machine, set `SWIFTTORRENT_WEBUI_BASE_URL` in that custom script's environment to a URL Arr can reach, for example `http://host.docker.internal:8180` for Docker Desktop or `http://<swiftTorrent-host>:<web-ui-port>` for a remote host.
 
-Alternatively, configure a Radarr or Sonarr Webhook connection with the **On Grab** event and URL `http://<swiftTorrent-host>:<web-ui-port>/api/arr/grab`. The callback accepts the webhook's nested `movie` or `series` object and extracts its title and metadata IDs.
+If the Radarr/Sonarr instance can reach swiftTorrent directly but cannot execute a local script, configure a **Webhook** connection with the **On Grab** event and URL `http://<swiftTorrent-host>:<web-ui-port>/api/arr/grab`. The callback accepts the webhook's nested movie or series data.
 
-The callback also works when it arrives after the torrent has been added: swiftTorrent links the hint using the normalized torrent info hash and refreshes metadata as soon as it finds that torrent.
+## Confirm callbacks
+
+After the next grab, swiftTorrent should log an `[ARR] Grab hint received` entry followed by the torrent hash match and metadata selection. If there is no callback, inspect the custom script's event log in Arr and confirm the script path, execution permission, and Web UI URL. If the callback arrives but cannot associate the torrent, compare the supplied download ID with the torrent hash shown in swiftTorrent's `/api/arr/diagnostics` endpoint. Lookup and matching errors are also recorded in swiftTorrent's runtime log.
+
+The script's stderr output includes the callback URL and supplied IDs to help diagnose a failed request. Do not expose the Arr API key here: the callback scripts do not need it because the endpoint is local to swiftTorrent.
+
+The bundled Radarr and Sonarr marks in the queue are the respective projects' logos and are used only to indicate the source of a transfer.

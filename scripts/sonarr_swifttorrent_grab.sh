@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+if [ "${sonarr_eventtype:-}" = "Test" ]; then
+  printf '%s\n' "swiftTorrent Sonarr custom script is installed; On Grab will send the torrent hash and series IDs."
+  exit 0
+fi
+
 : "${sonarr_download_id:?sonarr_download_id is required}"
 : "${sonarr_series_title:?sonarr_series_title is required}"
 

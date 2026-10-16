@@ -573,7 +573,7 @@ final class LocalWebServer {
     private func parseFormBody(_ bytes: [UInt8]) -> [String: String] {
         guard !bytes.isEmpty,
               let text = String(bytes: bytes, encoding: .utf8),
-              let components = URLComponents(string: "http://localhost?\(text)") else {
+              let components = URLComponents(string: "http://localhost?\(text.replacingOccurrences(of: "+", with: "%20"))") else {
             return [:]
         }
 

@@ -38,6 +38,10 @@ typedef struct {
 
 STSessionRef st_session_create(uint16_t listen_port_start, uint16_t listen_port_end);
 void st_session_destroy(STSessionRef session);
+void st_set_resume_data_directory(STSessionRef session, const char* directory);
+void st_request_resume_data(STSessionRef session);
+void st_process_resume_data_alerts(STSessionRef session);
+void st_save_resume_data_and_wait(STSessionRef session);
 
 bool st_add_magnet(
     STSessionRef session,

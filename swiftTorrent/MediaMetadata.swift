@@ -25,4 +25,25 @@ struct MediaMetadata: Hashable {
     var localPosterPath: URL?
     var displaySuffix: String?
     var sources: Set<String> = []
+
+    func formattedTitle(normalizingFormEncodedSpaces: Bool = false) -> String {
+        Self.formattedTitle(title, year: year, normalizingFormEncodedSpaces: normalizingFormEncodedSpaces)
+    }
+
+    static func formattedTitle(_ title: String, year: Int?, normalizingFormEncodedSpaces: Bool = false) -> String {
+        var base = title
+        if normalizingFormEncodedSpaces {
+            base = base.replacingOccurrences(of: "+", with: " ")
+        }
+        base = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let year {
+            for suffix in [" (\(year))", " \(year)"] where base.hasSuffix(suffix) {
+                base.removeLast(suffix.count)
+                base = base.trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+            return "\(base) (\(year))"
+        }
+        return base
+    }
 }

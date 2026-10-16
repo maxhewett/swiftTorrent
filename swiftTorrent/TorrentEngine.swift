@@ -212,6 +212,7 @@ final class TorrentEngine: ObservableObject {
     private var session: STSessionRef?
     private var timer: Timer?
     private var periodicCleanupLastRunAt = Date.distantPast
+    private var lastResumeDataRequestAt = Date.distantPast
     private var isPeriodicCleanupRunning = false
     private var periodicCleanupTask: Task<Void, Never>?
     private var activeCleanupScanTask: Task<PeriodicCleanupScanResult, Never>?
@@ -297,6 +298,10 @@ final class TorrentEngine: ObservableObject {
     init() {
         periodicCleanupLastRunAt = UserDefaults.standard.object(forKey: "swiftTorrent.periodicCleanupLastRunAt") as? Date ?? .distantPast
         session = st_session_create(6881, 6891)
+        if let session {
+            let resumeDirectory = TorrentStore.resumeDataDirectoryURL()
+            resumeDirectory.path.withCString { st_set_resume_data_directory(session, $0) }
+        }
 
         // Load pause states first (STABLE keys)
         desiredPausedKeys = loadPausedKeys()
@@ -1334,6 +1339,7 @@ final class TorrentEngine: ObservableObject {
         _ = id.withCString { st_torrent_remove(s, $0, deleteFiles) }
 
         TorrentStore.remove(key: stable)
+        TorrentStore.removeResumeData(for: stable)
         ArrMetadataStore.remove(key: stable)
         AppSettings.shared.unmarkCleaned(stable)
         AppSettings.shared.clearRecentCompletionMark(for: stable)
@@ -1452,6 +1458,11 @@ final class TorrentEngine: ObservableObject {
         let storedItems = TorrentStore.load()
         schedulePeriodicCleanupIfNeeded(storedItems: storedItems)
 
+        st_process_resume_data_alerts(s)
+        if Date().timeIntervalSince(lastResumeDataRequestAt) >= 60 {
+            st_request_resume_data(s)
+            lastResumeDataRequestAt = Date()
+        }
         let maxItems = 200
         var raw = Array(repeating: STTorrentStatus(), count: maxItems)
         let count = Int(st_get_torrents(s, &raw, Int32(maxItems)))
@@ -1831,6 +1842,7 @@ final class TorrentEngine: ObservableObject {
 
     #if canImport(AppKit)
     @objc private func appWillTerminate() {
+        if let session { st_save_resume_data_and_wait(session) }
         // Persist only explicit user pauses (not queue or idle auto-pauses).
         savePausedKeys(desiredPausedKeys)
     }

@@ -20,6 +20,10 @@ swiftTorrent is a macOS torrent app focused on movie and TV workflows, with a Sw
 - Torrent name cleanup and normalization for better readability.
 - Poster/title enrichment via Trakt/tvdb-style metadata sources.
 
+## Radarr and Sonarr setup
+
+To pass authoritative movie, series, and episode IDs to swiftTorrent, configure the included **On Grab** custom scripts in Radarr and Sonarr. See [docs/arr-integration.md](docs/arr-integration.md) for setup steps and troubleshooting.
+
 ## Screenshots
 
 <img width="50%" height="auto" alt="swiftTorrent 2026-06-02 21 53 29" src="https://github.com/user-attachments/assets/6c56add9-9d4a-4c13-bb1e-7b352e5290e0" /><img width="50%" height="auto" alt="swiftTorrent 2026-06-02 21 53 39" src="https://github.com/user-attachments/assets/40b10a92-1a78-4da2-85c7-172dd979d7ad" />

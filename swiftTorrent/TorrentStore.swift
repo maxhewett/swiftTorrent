@@ -159,6 +159,18 @@ enum TorrentStore {
         return dir.appendingPathComponent(fileName)
     }
 
+    static func resumeDataDirectoryURL() -> URL {
+        storeURL().deletingLastPathComponent().appendingPathComponent("resume-data", isDirectory: true)
+    }
+
+    static func removeResumeData(for key: String) {
+        let normalized = key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return }
+        let resumeFile = resumeDataDirectoryURL().appendingPathComponent("\(normalized).fastresume")
+        try? FileManager.default.removeItem(at: resumeFile)
+        try? FileManager.default.removeItem(at: resumeFile.appendingPathExtension("tmp"))
+    }
+
     private static func normalize(_ items: [StoredTorrent]) -> [StoredTorrent] {
         var byKey: [String: StoredTorrent] = [:]
         var orderedKeys: [String] = []
